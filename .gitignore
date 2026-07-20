@@ -1,0 +1,51 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+*.pyd
+build/
+dist/
+wheels/
+*.egg-info
+.eggs/
+
+# Virtual environments
+.venv
+venv/
+
+# 参考代码（第三方参考，不上传）
+参考代码/
+
+# 测试与覆盖率
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# 临时文件与缓存（项目内）
+.temp/
+tmp/
+cache/
+
+# 环境变量与密钥
+.env
+.env.*
+*.pem
+*.key
+
+# 日志与运行时数据
+*.log
+logs/
+*.sqlite3
+*.db
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db
