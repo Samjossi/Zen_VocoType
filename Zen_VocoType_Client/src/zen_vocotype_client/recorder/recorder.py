@@ -1,8 +1,10 @@
 """录音模块（选型四：InputStream 回调 + 线程安全队列累积）。
 
 - 16kHz/16bit/单声道（契约库 ``paths`` 冻结常量，🔴 禁止本组件另写数值）
-- 流实例复用（大纲交付物）：``InputStream`` 构造一次，start/stop 启停复用，
-  松开即停流拼接，尾音完整
+- 🔴 流生命周期：每次 ``start()`` 新建 ``InputStream``、``stop()`` 即 ``close()``
+  释放设备（按下占用、松开释放）。2026-07-21 实测：若实例复用仅 stop 不 close，
+  ALSA PCM 保持打开 → PipeWire 捕获节点以 ``[paused]`` 残留 →
+  GNOME 麦克风隐私指示常亮不灭 + 设备被本进程持续独占（其他应用抢不到麦克风）
 - 🔴 红线（选型一）：sounddevice 回调线程内**零业务调用**——回调只做
   「音频块写入 ``queue.Queue`` + 样本计数 + 达上限置 ``threading.Event``」，
   上限通知经 ``on_max_reached`` 钩子（装配层注册 Qt Signal.emit）
@@ -101,32 +103,38 @@ class Recorder:
         return self._max_reached.is_set()
 
     def start(self) -> None:
-        """开始录音（流实例复用：首次构造，之后 start/stop 循环）。"""
+        """开始录音（每次新建流：按下才占用设备）。"""
         if self._recording:
             logger.warning("录音进行中，忽略重复 start")
             return
         self._drain_queue()
         self._samples_seen = 0
         self._max_reached.clear()
-        if self._stream is None:
-            self._stream = sd.InputStream(
-                samplerate=DEFAULT_SAMPLE_RATE,
-                channels=DEFAULT_CHANNELS,
-                dtype=SAMPLE_DTYPE,
-                device=self._device,
-                callback=self._audio_callback,
-            )
+        self._stream = self._create_stream()
         self._stream.start()
         self._recording = True
         logger.debug("录音开始")
 
+    def _create_stream(self) -> sd.InputStream:
+        """构造新的输入流（测试可替换此方法注入替身，不依赖真实声卡）。"""
+        return sd.InputStream(
+            samplerate=DEFAULT_SAMPLE_RATE,
+            channels=DEFAULT_CHANNELS,
+            dtype=SAMPLE_DTYPE,
+            device=self._device,
+            callback=self._audio_callback,
+        )
+
     def stop(self) -> bytes:
-        """停止录音并拼接返回完整 PCM（16bit 小端字节流，尾音完整）。"""
+        """停止录音、关闭流释放设备（GNOME 指示即灭/设备解除独占），
+        拼接返回完整 PCM（16bit 小端字节流，尾音完整）。"""
         if not self._recording:
             logger.warning("未在录音，stop 返回空音频")
             return b""
         assert self._stream is not None
         self._stream.stop()
+        self._stream.close()  # 🔴 必须 close：仅 stop 会使 PipeWire 节点 [paused] 残留
+        self._stream = None
         self._recording = False
         chunks: list[bytes] = []
         while True:

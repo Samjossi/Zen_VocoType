@@ -57,11 +57,11 @@ class TestCallbackQueueProtocol:
         _feed(rec, _sine_block(0.6))  # 重复超限不重复触发
         assert hits == [1]
 
-    def test_start_resets_state(self):
+    def test_start_resets_state(self, monkeypatch):
         rec = Recorder(max_record_seconds=1)
+        monkeypatch.setattr(rec, "_create_stream", _FakeStream)
         _feed(rec, _sine_block(1.2))
         assert rec.max_reached
-        rec._stream = _FakeStream()
         rec.start()
         assert not rec.max_reached
         assert rec._queue.empty()
@@ -69,16 +69,44 @@ class TestCallbackQueueProtocol:
         rec.stop()
         assert not rec.recording
 
+    def test_stop_closes_stream_and_releases_device(self, monkeypatch):
+        """回归（2026-07-21）：stop 必须 close 流并释放引用——仅 stop 不 close
+        会使 PipeWire 捕获节点 [paused] 残留（GNOME 麦克风指示常亮 + 设备独占泄漏）。"""
+        rec = Recorder()
+        fake = _FakeStream()
+        monkeypatch.setattr(rec, "_create_stream", lambda: fake)
+        rec.start()
+        rec.stop()
+        assert fake.closed is True
+        assert rec._stream is None
+
+    def test_restart_creates_new_stream(self, monkeypatch):
+        """每次 start 新建流（按下才占用设备的语义）。"""
+        rec = Recorder()
+        made: list[_FakeStream] = []
+        monkeypatch.setattr(rec, "_create_stream", lambda: made.append(_FakeStream()) or made[-1])
+        rec.start()
+        rec.stop()
+        rec.start()
+        rec.stop()
+        assert len(made) == 2
+        assert all(s.closed for s in made)
+
     def test_stop_without_start_returns_empty(self):
         assert Recorder().stop() == b""
 
 
 class _FakeStream:
-    """绕过真实声卡的流替身（仅支撑 start/stop 状态路径）。"""
+    """绕过真实声卡的流替身（仅支撑 start/stop/close 生命周期断言）。"""
+
+    def __init__(self) -> None:
+        self.closed = False
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
-    def close(self) -> None: ...
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class TestDeviceProbe:
