@@ -7,7 +7,20 @@
 # socket_path: /自定义/绝对路径/zen_vocotype.sock  # 取消注释以覆盖契约库默认值
 
 # 全局热键（pynput 组合键表达式，按住说话、松开停止）
-hotkey: "<ctrl>+`"
+# 默认 <ctrl>+<alt>+t；🔴 勿改回 <ctrl>+`（与旧版 GridChat 冲突）或 <ctrl>+<alt>+v（本机已占用）
+hotkey: "<ctrl>+<alt>+t"
 # 剪贴板恢复延迟（毫秒）：粘贴动作发出后恢复原剪贴板内容的保守延迟，
 # 命名常量 + 可配置（选型 4 定稿默认 500ms；恢复前须校验剪贴板内容仍为本进程写入）
 paste_restore_delay_ms: 500
+
+# 最大录音时长（秒）：对齐协议体上限留足余量，到达上限自动停止并进入识别
+# max_record_seconds: 60
+
+# 录音输入设备（sounddevice 设备名或索引）；缺省为系统默认输入设备
+# input_device: null
+
+# 同类错误通知去重窗口（秒），防止通知轰炸
+# notify_dedup_seconds: 5
+
+# 声音辅助提示开关（默认关闭）
+# enable_sound_notify: false

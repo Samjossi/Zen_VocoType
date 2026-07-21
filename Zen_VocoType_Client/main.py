@@ -1,18 +1,62 @@
-"""Zen_VocoType_Client 入口（骨架）。
+"""Zen_VocoType_Client 入口。
 
-🔴 本文件为阶段 0 骨架，业务实现属阶段 2（热键/录音/转录/输出/托盘/状态机）。
+用法：
+
+- ``python main.py``              正常启动（热键/录音/识别/输出/托盘全装配）
+- ``python main.py --screenshot <目录>``  托盘布局截图自检（开发自查工具，
+  见 ``tray/selftest.py``；🔴 仅开发用途）
+
+退出码：0 正常退出；2 配置校验失败；3 录音设备不可用；4 热键后端启动失败。
 """
 
 import sys
+from pathlib import Path
 
 
 def main() -> int:
-    """入口函数；骨架阶段明确返回非零并说明原因（🔴 禁止静默/假成功）。"""
-    print(
-        "Zen_VocoType_Client 骨架：业务实现属阶段 2，当前不可启动。",
-        file=sys.stderr,
-    )
-    return 1
+    # 启动顺序：日志 → 配置校验 → 装配启动 → Qt 事件循环
+    from zen_vocotype_client.config import Settings, validate_startup
+    from zen_vocotype_client.logging_setup import setup_logging
+
+    settings = Settings()
+    setup_logging(settings.log_dir)
+
+    try:
+        validate_startup(settings)
+    except ValueError as exc:
+        from loguru import logger
+
+        logger.error("配置校验失败：{}", exc)
+        return 2
+
+    if "--screenshot" in sys.argv:
+        idx = sys.argv.index("--screenshot")
+        try:
+            output_dir = Path(sys.argv[idx + 1]).resolve()
+        except IndexError:
+            from loguru import logger
+
+            logger.error("用法: python main.py --screenshot <输出目录>")
+            return 2
+        from zen_vocotype_client.tray.selftest import run_screenshot_mode
+
+        return run_screenshot_mode(output_dir)
+
+    from PySide6.QtWidgets import QApplication
+
+    from zen_vocotype_client.app import ClientApp
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    client = ClientApp(settings)
+    code = client.start()
+    if code != 0:
+        client.shutdown()
+        return code
+    if client._tray is not None:
+        client._tray.quit_requested.connect(app.quit)
+    app.aboutToQuit.connect(client.shutdown)
+    return app.exec()
 
 
 if __name__ == "__main__":

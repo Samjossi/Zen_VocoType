@@ -8,3 +8,8 @@
 - ``output``     文字输出（剪贴板+Ctrl+V 改进版主路径，xdotool 降级）
 - ``tray``       托盘与 UI（PySide6，含无托盘降级模式）
 """
+
+#: 客户端版本号（单一出处；pyproject.toml 经 hatch 动态读取本值，
+#: 托盘菜单版本显示引用本值——与旧 GridChat 明确区分）
+__version__ = "0.2.0"
+
