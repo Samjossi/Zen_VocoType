@@ -28,6 +28,13 @@ ERR_PROTOCOL_VERSION_MISMATCH: int = 1003
 #: 请求头缺少必填字段
 ERR_MISSING_FIELD: int = 1004
 
+#: action 已定义但本端版本未实现（如 v1 收到 audio_chunk）；
+#: 与 1002（未知 action）区分：调用方收到本错误码不应按「请求有误」修正重试
+ERR_ACTION_NOT_SUPPORTED: int = 1005
+
+#: 对端身份校验失败（SO_PEERCRED UID 不在白名单，见 paths.py 安全约定 4）
+ERR_UNAUTHORIZED_PEER: int = 1006
+
 # ---------------------------------------------------------------------------
 # 2xxx 服务状态错误
 # ---------------------------------------------------------------------------

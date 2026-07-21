@@ -1,9 +1,11 @@
 # Zen_VocoType_Service 默认配置（本组件唯一配置源）
 # 优先级：环境变量（ZEN_VOCOTYPE_SERVICE_*）> 本文件 > 代码默认值
-# Socket 路径默认值唯一出处在契约库 zen_vocotype_protocol.paths，此处仅允许覆盖
+# Socket 路径默认值唯一出处在契约库 zen_vocotype_protocol.paths，此处仅允许覆盖；
+# 🔴 不要照抄默认值到本文件——那会使唯一出处失效（默认值演进时本文件静默滞留旧值）
 # 🔴 路径类配置请写绝对路径；相对路径违反大纲原则 3（禁止 cwd 相对解析），
 #    模型/日志目录默认值已在代码中按组件自身目录解析，此处无需配置
 
-socket_path: /tmp/zen_vocotype.sock
+# socket_path: /自定义/绝对路径/zen_vocotype.sock  # 取消注释以覆盖契约库默认值
+
 # 默认加载模型（须存在于模型注册表）
 default_model: paraformer-large

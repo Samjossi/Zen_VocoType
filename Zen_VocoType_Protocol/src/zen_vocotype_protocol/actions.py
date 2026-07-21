@@ -26,7 +26,10 @@ ACTION_MODEL_SWITCH: str = "model_switch"
 #: 流式识别音频分片（v1 仅预留帧复用能力，🔴 不实现）
 ACTION_AUDIO_CHUNK: str = "audio_chunk"
 
-#: 全部已定义 action（供校验入站请求合法性）
+#: 全部已定义 action（供校验入站请求合法性）。
+#: 注意：本集合包含 v1 未实现的 ``audio_chunk``——入站校验应放行已定义 action，
+#: 由分发层对未实现者返回 ``errors.ERR_ACTION_NOT_SUPPORTED``（1005）；
+#: 只有不在本集合中的 action 才返回 ``errors.ERR_UNKNOWN_ACTION``（1002）
 ALL_ACTIONS: frozenset[str] = frozenset(
     {
         ACTION_HEALTH,

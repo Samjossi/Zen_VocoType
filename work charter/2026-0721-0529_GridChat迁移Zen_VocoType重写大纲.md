@@ -92,7 +92,7 @@ GridChat 三件套（`参考代码/GridChat_Service`、`参考代码/GridChat_Cl
 | 开发调试 | 两个终端 / IDE 复合调试配置（VSCode `compounds`）同时跑两端，可同链路断点 |
 
 - **Launcher 开发模式**：`--dev` 参数下不拉二进制，改用当前 `.venv` 的 `python main.py` 拉起两端
-- **dev 环境隔离**：开发调试使用独立 Socket 路径（如 `/tmp/zen_vocotype_dev.sock`），避免与正式版互相干扰（继承旧 `start_dev_debug.sh` 的思路）
+- **dev 环境隔离**：开发调试使用独立 Socket 路径（默认值唯一出处为契约库 `paths.DEV_SOCKET_PATH`，位于用户私有运行目录），避免与正式版互相干扰（继承旧 `start_dev_debug.sh` 的思路）
 
 ### 3.4 Action 规划（初稿）
 

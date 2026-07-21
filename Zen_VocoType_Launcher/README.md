@@ -32,6 +32,6 @@ Zen_VocoType_Launcher/
 ```
 
 - **单一配置源**：`config.py` 的 `Settings` 类 + `config.yaml` + 环境变量（前缀 `ZEN_VOCOTYPE_LAUNCHER_`）
-- `--dev` 开发模式使用独立 Socket 路径（默认 `/tmp/zen_vocotype_dev.sock`，与正式版隔离）
+- `--dev` 开发模式使用独立 Socket 路径（默认值唯一出处在契约库 `zen_vocotype_protocol.paths.DEV_SOCKET_PATH`，位于用户私有运行目录，与正式版隔离）
 - 就绪等待走协议级 `ready` 接口轮询，🔴 禁止固定 sleep 充当同步手段
 - 协议语义见 `文档/通信协议设计_v1.0.md`；协议常量禁止在本组件重复定义

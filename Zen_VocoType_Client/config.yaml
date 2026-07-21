@@ -1,9 +1,11 @@
 # Zen_VocoType_Client 默认配置（本组件唯一配置源）
 # 优先级：环境变量（ZEN_VOCOTYPE_CLIENT_*）> 本文件 > 代码默认值
-# Socket 路径默认值唯一出处在契约库 zen_vocotype_protocol.paths，此处仅允许覆盖
+# Socket 路径默认值唯一出处在契约库 zen_vocotype_protocol.paths，此处仅允许覆盖；
+# 🔴 不要照抄默认值到本文件——那会使唯一出处失效（默认值演进时本文件静默滞留旧值）
 # 🔴 路径类配置请写绝对路径（禁止 cwd 相对解析）
 
-socket_path: /tmp/zen_vocotype.sock
+# socket_path: /自定义/绝对路径/zen_vocotype.sock  # 取消注释以覆盖契约库默认值
+
 # 全局热键（pynput 组合键表达式，按住说话、松开停止）
 hotkey: "<ctrl>+`"
 # 剪贴板恢复延迟（毫秒）：粘贴动作发出后恢复原剪贴板内容的保守延迟，
