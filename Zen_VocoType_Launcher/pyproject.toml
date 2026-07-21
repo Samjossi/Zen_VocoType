@@ -1,0 +1,19 @@
+[project]
+name = "zen-vocotype-launcher"
+version = "0.1.0"
+description = "Zen_VocoType 启动器：按序拉起服务端与客户端、就绪等待、单实例锁、失败清理"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "zen-vocotype-protocol",
+    "psutil",
+    "pydantic-settings",
+    "pyyaml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zen_vocotype_launcher"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

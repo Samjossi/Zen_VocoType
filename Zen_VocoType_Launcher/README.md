@@ -17,3 +17,21 @@
 | --- | --- |
 | Zen_VocoType_Service | 由本启动器拉起，先于客户端就绪 |
 | Zen_VocoType_Client | 由本启动器拉起，依赖服务端已启动 |
+
+## 目录结构与配置（阶段 0 定稿）
+
+```
+Zen_VocoType_Launcher/
+├── main.py                 # 入口（当前为骨架，实现属阶段 3）
+├── pyproject.toml          # 独立项目元数据与依赖声明
+├── config.yaml             # 本组件唯一配置文件
+├── src/zen_vocotype_launcher/
+│   └── config.py           # 唯一配置入口 Settings（pydantic-settings）
+├── assets/                 # 通知/桌面图标（阶段 3 接入）
+└── logs/                   # 运行日志
+```
+
+- **单一配置源**：`config.py` 的 `Settings` 类 + `config.yaml` + 环境变量（前缀 `ZEN_VOCOTYPE_LAUNCHER_`）
+- `--dev` 开发模式使用独立 Socket 路径（默认 `/tmp/zen_vocotype_dev.sock`，与正式版隔离）
+- 就绪等待走协议级 `ready` 接口轮询，🔴 禁止固定 sleep 充当同步手段
+- 协议语义见 `文档/通信协议设计_v1.0.md`；协议常量禁止在本组件重复定义

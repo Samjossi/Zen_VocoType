@@ -1,0 +1,8 @@
+# Zen_VocoType_Launcher 默认配置（本组件唯一配置源）
+# 优先级：环境变量（ZEN_VOCOTYPE_LAUNCHER_*）> 本文件 > 代码默认值
+# Socket 路径默认值唯一出处在契约库 zen_vocotype_protocol.paths，此处仅允许覆盖
+# 🔴 路径类配置请写绝对路径（禁止 cwd 相对解析）
+
+socket_path: /tmp/zen_vocotype.sock
+# --dev 开发模式专用 Socket 路径（与正式版隔离）
+dev_socket_path: /tmp/zen_vocotype_dev.sock

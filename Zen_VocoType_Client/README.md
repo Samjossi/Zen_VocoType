@@ -17,3 +17,25 @@
 | --- | --- |
 | Zen_VocoType_Launcher | 由启动器启动，与其余进程协调避免冲突 |
 | Zen_VocoType_Service | 调用服务端能力，服务端是功能实现的后盾 |
+
+## 目录结构与配置（阶段 0 定稿）
+
+```
+Zen_VocoType_Client/
+├── main.py                 # 入口（当前为骨架，实现属阶段 2）
+├── pyproject.toml          # 独立项目元数据与依赖声明
+├── config.yaml             # 本组件唯一配置文件
+├── src/zen_vocotype_client/
+│   ├── config.py           # 唯一配置入口 Settings（pydantic-settings）
+│   ├── hotkey/             # 全局热键（pynput；HotkeyBackend 抽象预留 evdev/Portal）
+│   ├── recorder/           # 录音（sounddevice，实例复用）
+│   ├── transcribe/         # Socket 客户端与状态机
+│   ├── output/             # 文字输出（剪贴板+Ctrl+V 主路径，xdotool 降级）
+│   └── tray/               # 托盘与 UI（PySide6，含无托盘降级模式）
+├── assets/                 # 托盘图标（阶段 2 接入）
+└── logs/                   # 运行日志
+```
+
+- **单一配置源**：`config.py` 的 `Settings` 类 + `config.yaml` + 环境变量（前缀 `ZEN_VOCOTYPE_CLIENT_`）
+- 技术栈（选型定稿）：PySide6 / pynput / sounddevice / 剪贴板+Ctrl+V 改进版
+- 协议语义见 `文档/通信协议设计_v1.0.md`；协议常量禁止在本组件重复定义

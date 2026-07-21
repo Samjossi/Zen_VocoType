@@ -1,0 +1,22 @@
+[project]
+name = "zen-vocotype-client"
+version = "0.1.0"
+description = "Zen_VocoType 客户端：全局热键、录音、识别请求、文字输出、托盘交互"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "zen-vocotype-protocol",
+    "PySide6",
+    "pynput",
+    "sounddevice",
+    "numpy",
+    "pydantic-settings",
+    "pyyaml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zen_vocotype_client"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
