@@ -7,9 +7,12 @@
 - 配置源优先级与组件根推算的**行为逻辑单一出处**为契约库
   ``zen_vocotype_protocol.settings``，本文件仅声明字段与默认值
 - Socket 路径默认值唯一出处为契约库 ``zen_vocotype_protocol.paths``，此处仅允许覆盖
+- 模型注册表内嵌于本配置（选型二），缺省内置 paraformer-large 与 sensevoice-small
 """
 
 from pathlib import Path
+
+from pydantic import BaseModel, model_validator
 
 from zen_vocotype_protocol.paths import DEFAULT_SOCKET_PATH
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
@@ -19,6 +22,52 @@ COMPONENT_ROOT: Path = component_root(__file__)
 
 #: 默认配置文件路径
 CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
+
+#: 推理超时预算默认值（秒）。依据：协议 ``MAX_BODY_BYTES`` 约合 10 分钟录音，
+#: CPU 推理耗时实测标定见阶段 1 验收记录（T1.6），当前值为其安全上界
+DEFAULT_INFER_TIMEOUT_S: float = 60.0
+
+#: 推理队列积压阈值（选型四）：超过即拒绝新请求返回 2002，防不可预期延迟
+DEFAULT_QUEUE_MAX_PENDING: int = 4
+
+#: 连接数上限（选型一）：防御性限制，正常仅 1 客户端长连接 + Launcher 探测
+DEFAULT_MAX_CONNECTIONS: int = 8
+
+
+class ModelEntry(BaseModel):
+    """模型注册表条目：``model_id``（缓存/在线）与 ``local_path``（本地直载）二选一。"""
+
+    model_id: str | None = None
+    local_path: Path | None = None
+    vad_model_id: str | None = None
+    punc_model_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check_source_exclusive(self) -> "ModelEntry":
+        if (self.model_id is None) == (self.local_path is None):
+            raise ValueError("模型条目必须且只能提供 model_id 或 local_path 之一")
+        return self
+
+    @property
+    def source(self) -> str:
+        """加载来源描述（model_info 响应用）。"""
+        if self.model_id is not None:
+            return f"model_id:{self.model_id}"
+        return f"local_path:{self.local_path}"
+
+
+#: 内置默认注册表（用户可在 config.yaml 的 models 段覆盖/扩充）
+DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
+    "paraformer-large": {
+        "model_id": "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "punc_model_id": "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+    },
+    "sensevoice-small": {
+        "model_id": "iic/SenseVoiceSmall",
+        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+    },
+}
 
 
 class Settings(ComponentSettings):
@@ -30,3 +79,18 @@ class Settings(ComponentSettings):
     models_dir: Path = COMPONENT_ROOT / "models"
     default_model: str = "paraformer-large"
     log_dir: Path = COMPONENT_ROOT / "logs"
+
+    models: dict[str, ModelEntry] = DEFAULT_MODEL_REGISTRY
+    infer_timeout_s: float = DEFAULT_INFER_TIMEOUT_S
+    queue_max_pending: int = DEFAULT_QUEUE_MAX_PENDING
+    max_connections: int = DEFAULT_MAX_CONNECTIONS
+
+    @model_validator(mode="after")
+    def _check_default_model_registered(self) -> "Settings":
+        """启动校验：默认模型必须在注册表内，🔴 不存在即报错（禁止静默回退）。"""
+        if self.default_model not in self.models:
+            raise ValueError(
+                f"default_model={self.default_model!r} 不在模型注册表中"
+                f"（已注册: {sorted(self.models)}）"
+            )
+        return self

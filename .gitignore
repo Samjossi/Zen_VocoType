@@ -28,6 +28,9 @@ htmlcov/
 tmp/
 cache/
 
+# 模型权重（体积大，不随仓库分发；运行时经 MODELSCOPE_CACHE 下载/缓存）
+Zen_VocoType_Service/models/
+
 # 环境变量与密钥
 .env
 .env.*

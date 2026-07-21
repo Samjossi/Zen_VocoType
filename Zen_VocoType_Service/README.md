@@ -1,37 +1,107 @@
 # Zen_VocoType_Service（服务端）
 
-## 职责
+FunASR 语音识别服务端：Unix Socket 复合帧协议、模型注册表驱动的加载/原子切换、
+先监听后异步加载、单实例锁 + 确定性退出。
 
-提供 Zen_VocoType 的核心主服务，负责后台业务逻辑与数据处理，为客户端提供能力支撑。
+## 启动与停服
 
-## 定位
+```bash
+# 开发态（项目根 .venv）
+.venv/bin/python Zen_VocoType_Service/main.py
+```
 
-- 作为后台服务进程运行，不直接与用户交互
-- 由 `Zen_VocoType_Launcher` 启动器统一拉起，也可**独立启动运行**（自身功能完整，监听 Socket 等待连接）
-- 通过约定的通信方式与 `Zen_VocoType_Client`（客户端）协作
-- **独立性约束**：本组件为独立项目，不 import 其他两个组件目录下的任何代码；对外协作仅通过 Unix Socket 协议
+- **启动时序**：进程启动即监听 Socket（`health` 可答 `starting`），后台线程异步
+  加载默认模型 + 试推理自检，完成后状态推进为 `ready`；加载失败为 `error`
+  （`ready` 返回 3002 及真实原因）
+- **停服**：向进程发 `SIGTERM`（Launcher 读锁文件内 PID 精确停服），服务端执行
+  确定性退出序列：停止 accept → 停止推理 worker → 释放模型 → 删除 Socket 文件
+  → 释放单实例锁，退出码 0
+- **单实例**：启动时 `flock` 抢锁（契约库 `paths.SERVICE_LOCK_PATH`），已有实例
+  运行则报错退出非零；锁内写有 PID；kill -9 后无 stale 锁可直接重启
 
-## 与其他组件的关系
+## 配置（单一配置源）
 
-| 组件 | 关系 |
-| --- | --- |
-| Zen_VocoType_Launcher | 由启动器启动，与其余进程协调避免冲突 |
-| Zen_VocoType_Client | 为客户端提供主服务，客户端依赖本服务运行 |
+`src/zen_vocotype_service/config.py` 的 `Settings` + `config.yaml` + 环境变量
+（前缀 `ZEN_VOCOTYPE_SERVICE_`），优先级：显式入参 > 环境变量 > config.yaml > 默认值。
 
-## 目录结构与配置（阶段 0 定稿）
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `socket_path` | 契约库 `paths.DEFAULT_SOCKET_PATH`（`$XDG_RUNTIME_DIR/zen_vocotype.sock`） | 仅允许覆盖，默认值勿照抄 |
+| `models_dir` | 组件 `models/` | MODELSCOPE_CACHE 指向（入口第一行硬设置，顺序敏感） |
+| `default_model` | `paraformer-large` | 必须存在于注册表，否则启动报错退出 |
+| `log_dir` | 组件 `logs/` | loguru 轮转（10MB × 5） |
+| `models` | 内置两条（见下） | 模型注册表（config.yaml 内嵌） |
+| `infer_timeout_s` | 60 | 推理超时预算（依据见验收记录实测） |
+| `queue_max_pending` | 4 | 推理队列积压阈值，超过拒绝新请求 |
+| `max_connections` | 8 | 连接数上限（防御性） |
+
+### 模型注册表写法
+
+```yaml
+models:
+  paraformer-large:
+    model_id: iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+    vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+    punc_model_id: iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch
+  sensevoice-small:
+    model_id: iic/SenseVoiceSmall
+    vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+  # 本地直载条目示例（model_id 与 local_path 二选一）：
+  # my-local-model:
+  #   local_path: /绝对路径/到/模型目录
+default_model: paraformer-large
+```
+
+- `model_id`（缓存命中/在线下载）与 `local_path`（本地直载）每条目二选一
+- 注册表条目支持挂附属 VAD / 标点模型
+- 模型缓存布局即 modelscope 现行布局（`models/models/iic--<名>/snapshots/master`），
+  缓存命中则离线加载，未命中在线下载（进度以日志呈现）
+
+## 协议行为摘要
+
+协议语义定稿见 `文档/通信协议设计_v1.0.md`；常量唯一出处为契约库
+`zen_vocotype_protocol`（action / 错误码 / 帧格式 / 路径），本组件不重复定义。
+
+- 已实现 action：`health` / `ready` / `recognize` / `model_info` / `model_switch`
+- `audio_chunk`（预留未实现）：入站校验放行后返回 **1005**；未知 action 返回 **1002**
+- 错误码 13 个全部按冻结表使用，未新增；关键映射：推理超时 → 4002（message 注明
+  `timeout`）、队列满/切换中收到 recognize → 2002（注明 `model_switching`）、
+  目标未注册 → 3001、加载失败 → 3002、切换自检失败回滚 → 3003
+- `model_switch` 为原子切换（先备后切 + 试推理自检，失败回滚旧模型不受影响），
+  成功后以 `model_info` 交叉验证
+- Socket 本地访问控制（协议 §7.1 强制项）：bind 前校验非符号链接且属主自身 →
+  bind 后显式 `chmod 0600` → accept 时 `SO_PEERCRED` 校验同 UID，违规返回 1006
+
+## 目录结构
 
 ```
 Zen_VocoType_Service/
-├── main.py                 # 入口（当前为骨架，实现属阶段 1）
-├── pyproject.toml          # 独立项目元数据与依赖声明
+├── main.py                 # 入口：MODELSCOPE_CACHE 第一行 → 锁 → 先监听 → 异步加载
+├── pyproject.toml          # 项目元数据与依赖
 ├── config.yaml             # 本组件唯一配置文件
 ├── src/zen_vocotype_service/
-│   └── config.py           # 唯一配置入口 Settings（pydantic-settings）
-├── assets/                 # 托盘/通知图标（阶段 1 接入）
-├── logs/                   # 运行日志
-└── models/                 # 模型外置目录（不随二进制分发）
+│   ├── config.py           # Settings + 模型注册表 + 启动校验
+│   ├── logging_setup.py    # loguru 双 sink 封装（禁跨组件 import）
+│   ├── instance_lock.py    # flock 单实例锁 + PID
+│   ├── server.py           # Socket 监听 + §7.1 访问控制
+│   ├── connection.py       # 每连接收发循环 + 入站校验 + 分发
+│   ├── state.py            # 线程安全服务状态（starting/ready/error）
+│   ├── context.py          # 处理器共享上下文
+│   ├── protocol_io.py      # 响应构建 + ProtocolError
+│   ├── handlers/           # health/ready/recognize/model_info/model_switch
+│   ├── models/             # registry / loader（含自检）/ manager（原子切换）
+│   └── inference/          # 单 worker 推理队列
+├── assets/selftest_16k.pcm # 自检音频（真实语音 3s，来源见 loader 注释）
+├── logs/                   # 运行日志 + 阶段 1 实测数据（phase1_measurements.json）
+├── models/                 # MODELSCOPE_CACHE（模型外置目录）
+└── tests/                  # pytest（slow 标记为真实模型/进程级测试）
 ```
 
-- **单一配置源**：`config.py` 的 `Settings` 类 + `config.yaml` + 环境变量（前缀 `ZEN_VOCOTYPE_SERVICE_`），优先级：显式入参 > 环境变量 > config.yaml > 代码默认值
-- Socket 路径默认值唯一出处在契约库 `zen_vocotype_protocol.paths`，本组件仅允许覆盖
-- 协议语义见 `文档/通信协议设计_v1.0.md`；协议常量禁止在本组件重复定义
+## 测试
+
+```bash
+# 快速测试（默认排除 slow）
+cd Zen_VocoType_Service && ../../.venv/bin/python -m pytest tests -q
+# 全量（含真实模型加载、E2E、冷启动实测、样本识别旁证）
+../../.venv/bin/python -m pytest tests -q -m slow
+```

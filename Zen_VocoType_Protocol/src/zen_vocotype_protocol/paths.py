@@ -36,6 +36,11 @@ DEFAULT_SOCKET_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype.sock")
 #: 继承旧 start_dev_debug.sh 的隔离思路）
 DEV_SOCKET_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_dev.sock")
 
+#: 服务端单实例锁文件路径（flock + PID 记录，选型七）。
+#: 🔴 必须落在用户私有运行目录（与 Socket 路径同约定，禁止 /tmp 可预测路径）；
+#: Launcher（阶段 3）读本文件内 PID 发 SIGTERM 精确停服，路径只准引用本常量
+SERVICE_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_service.lock")
+
 # ---------------------------------------------------------------------------
 # 音频格式约定（recognize 请求的默认 PCM 参数，与选型 3 一致）
 # ---------------------------------------------------------------------------
