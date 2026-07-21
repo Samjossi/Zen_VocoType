@@ -20,13 +20,22 @@ from .combo import HotkeyCombo, modifier_name
 def _canonical_key(key) -> tuple:
     """按键规范化为可比较元组。
 
-    pynput ``HotKey.parse("<f9>")`` 产出 ``KeyCode(vk)``，而 Listener 事件
-    传来 ``Key.f9``（枚举，``.value`` 为同 vk 的 KeyCode）——统一规范化为
-    ``(vk, char)`` 元组后比较，两种来源才能配对。
+    两种来源的按键对象表示不一致（实测定案，2026-07-21）：
+
+    - ``HotKey.parse("<f9>")`` 产出 ``KeyCode(vk=65478)``，而 Listener 事件
+      传来 ``Key.f9``（枚举，``.value`` 为同 vk 的 KeyCode）——特殊键须按 vk 比较
+    - 字符键恰好相反：``HotKey.parse("o")`` 产出 ``KeyCode(char='o', vk=None)``，
+      而物理按键事件传来 ``KeyCode(vk=32, char='o')``（带物理键码）——
+      字符键须按 char 比较（忽略 vk），否则物理按键永不匹配
+
+    规则：char 非空按 char 匹配；char 为空（特殊键）按 vk 匹配。
     """
     if isinstance(key, keyboard.Key):
         key = key.value  # Key 枚举 → 其 KeyCode 值
-    return (getattr(key, "vk", None), getattr(key, "char", None))
+    char = getattr(key, "char", None)
+    if char is not None:
+        return ("char", char)
+    return ("vk", getattr(key, "vk", None))
 
 
 class ComboTracker:

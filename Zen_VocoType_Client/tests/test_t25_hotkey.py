@@ -54,6 +54,17 @@ class TestComboTracker:
         assert t.active  # 修饰松开不影响激活态
         assert t.release(O) is True
 
+    def test_physical_keycode_with_vk_matches(self):
+        """回归（2026-07-21 定案）：物理事件字符键带 vk（KeyCode(vk=32,char='o')），
+        解析端 vk=None——必须按 char 匹配，否则物理按键永不触发。"""
+        combo = parse_hotkey("<ctrl>+<alt>+o")
+        t = ComboTracker(combo)
+        t.press(CTRL)
+        t.press(keyboard.Key.alt_l)
+        phys_o = keyboard.KeyCode(vk=32, char="o")  # 物理事件形态（带键码）
+        assert t.press(phys_o) is True
+        assert t.release(phys_o) is True
+
     def test_release_without_press_ignored(self):
         t = _tracker("<ctrl>+<alt>+o")
         assert t.release(O) is False
