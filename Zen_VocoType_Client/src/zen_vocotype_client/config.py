@@ -34,9 +34,9 @@ class Settings(ComponentSettings):
     socket_path: str = DEFAULT_SOCKET_PATH
 
     #: 全局热键（pynput 组合键表达式，按住说话、松开识别）；启动时经 pynput 解析校验。
-    #: 默认 <ctrl>+<alt>+t（T 取 Transcribe 联想）；
-    #: 🔴 与旧版 GridChat <ctrl>+` 及本机已占用的 <ctrl>+<alt>+v 明确区分
-    hotkey: str = "<ctrl>+<alt>+t"
+    #: 默认 <ctrl>+<alt>+o；
+    #: 🔴 与旧版 GridChat <ctrl>+` 及本机已占用的 <ctrl>+<alt>+v / <ctrl>+<alt>+t 明确区分
+    hotkey: str = "<ctrl>+<alt>+o"
 
     #: 剪贴板恢复延迟（毫秒）：粘贴发出后恢复原剪贴板的保守延迟。
     #: 依据：覆盖主流应用粘贴读取的 P99 经验值（沿用旧版 500ms 数值但去除裸 sleep 性质，

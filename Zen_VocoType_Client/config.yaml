@@ -7,8 +7,8 @@
 # socket_path: /自定义/绝对路径/zen_vocotype.sock  # 取消注释以覆盖契约库默认值
 
 # 全局热键（pynput 组合键表达式，按住说话、松开停止）
-# 默认 <ctrl>+<alt>+t；🔴 勿改回 <ctrl>+`（与旧版 GridChat 冲突）或 <ctrl>+<alt>+v（本机已占用）
-hotkey: "<ctrl>+<alt>+t"
+# 默认 <ctrl>+<alt>+o；🔴 勿改回 <ctrl>+`（与旧版 GridChat 冲突）、<ctrl>+<alt>+v 或 <ctrl>+<alt>+t（本机已占用）
+hotkey: "<ctrl>+<alt>+o"
 # 剪贴板恢复延迟（毫秒）：粘贴动作发出后恢复原剪贴板内容的保守延迟，
 # 命名常量 + 可配置（选型 4 定稿默认 500ms；恢复前须校验剪贴板内容仍为本进程写入）
 paste_restore_delay_ms: 500

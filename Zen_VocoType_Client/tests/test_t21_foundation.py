@@ -60,7 +60,7 @@ class TestParseHotkey:
 class TestSettingsValidation:
     def test_defaults(self):
         s = Settings(socket_path="/tmp/x.sock")
-        assert s.hotkey == "<ctrl>+<alt>+t"  # 与旧 GridChat 及本机已占用组合明确区分
+        assert s.hotkey == "<ctrl>+<alt>+o"  # 与旧 GridChat 及本机已占用组合明确区分
         assert s.paste_restore_delay_ms == 500
         assert s.max_record_seconds == 60
         assert s.input_device is None

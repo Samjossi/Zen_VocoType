@@ -9,7 +9,7 @@ from zen_vocotype_client.hotkey.pynput_backend import PynputBackend
 
 CTRL = keyboard.Key.ctrl_l
 SHIFT = keyboard.Key.shift_l
-T = keyboard.KeyCode.from_char("t")
+O = keyboard.KeyCode.from_char("o")
 BACKTICK = keyboard.KeyCode.from_char("`")
 
 
@@ -19,47 +19,47 @@ def _tracker(expr: str) -> ComboTracker:
 
 class TestComboTracker:
     def test_press_requires_all_modifiers(self):
-        t = _tracker("<ctrl>+<alt>+t")
-        assert t.press(T) is False  # 无修饰键
+        t = _tracker("<ctrl>+<alt>+o")
+        assert t.press(O) is False  # 无修饰键
         t.press(CTRL)
-        assert t.press(T) is False  # 缺 alt
+        assert t.press(O) is False  # 缺 alt
         t.press(keyboard.Key.alt_l)
-        assert t.press(T) is True  # 全部就绪 → 激活
+        assert t.press(O) is True  # 全部就绪 → 激活
 
     def test_release_main_key_ends(self):
-        t = _tracker("<ctrl>+<alt>+t")
+        t = _tracker("<ctrl>+<alt>+o")
         t.press(CTRL)
         t.press(keyboard.Key.alt_l)
-        assert t.press(T) is True
-        assert t.release(T) is True
+        assert t.press(O) is True
+        assert t.release(O) is True
         assert not t.active
 
     def test_repeat_press_debounced(self):
         """系统键重复：激活期间重复 press 不重复产出事件。"""
-        t = _tracker("<ctrl>+<alt>+t")
+        t = _tracker("<ctrl>+<alt>+o")
         t.press(CTRL)
         t.press(keyboard.Key.alt_l)
-        assert t.press(T) is True
+        assert t.press(O) is True
         for _ in range(5):  # 按住不放时系统重复产生 press
-            assert t.press(T) is False
+            assert t.press(O) is False
 
     def test_early_modifier_release_keeps_active(self):
         """按住说话期间提前松开修饰键不结束（release 以主键释放为准）。"""
-        t = _tracker("<ctrl>+<alt>+t")
+        t = _tracker("<ctrl>+<alt>+o")
         t.press(CTRL)
         t.press(keyboard.Key.alt_l)
-        assert t.press(T) is True
+        assert t.press(O) is True
         t.release(CTRL)
         t.release(keyboard.Key.alt_l)
         assert t.active  # 修饰松开不影响激活态
-        assert t.release(T) is True
+        assert t.release(O) is True
 
     def test_release_without_press_ignored(self):
-        t = _tracker("<ctrl>+<alt>+t")
-        assert t.release(T) is False
+        t = _tracker("<ctrl>+<alt>+o")
+        assert t.release(O) is False
 
     def test_wrong_main_key_ignored(self):
-        t = _tracker("<ctrl>+<alt>+t")
+        t = _tracker("<ctrl>+<alt>+o")
         t.press(CTRL)
         t.press(keyboard.Key.alt_l)
         assert t.press(keyboard.KeyCode.from_char("x")) is False
@@ -74,12 +74,12 @@ class TestComboTracker:
 
     def test_rearm_after_full_cycle(self):
         """完整按住→松开后可再次激活。"""
-        t = _tracker("<ctrl>+<alt>+t")
+        t = _tracker("<ctrl>+<alt>+o")
         for _ in range(2):
             t.press(CTRL)
             t.press(keyboard.Key.alt_l)
-            assert t.press(T) is True
-            assert t.release(T) is True
+            assert t.press(O) is True
+            assert t.release(O) is True
             t.release(CTRL)
             t.release(keyboard.Key.alt_l)
 
@@ -89,7 +89,7 @@ class TestPynputBackend:
         """后端创建与启停冒烟（本机 X11 环境；失败须明确报错）。"""
         events: list[str] = []
         backend = PynputBackend(
-            parse_hotkey("<ctrl>+<alt>+t"),
+            parse_hotkey("<ctrl>+<alt>+o"),
             on_press=lambda: events.append("press"),
             on_release=lambda: events.append("release"),
         )
@@ -103,14 +103,14 @@ class TestPynputBackend:
         """红线验证：后端回调路径仅调注入钩子（经 tracker 判定后触发）。"""
         events: list[str] = []
         backend = PynputBackend(
-            parse_hotkey("<ctrl>+<alt>+t"),
+            parse_hotkey("<ctrl>+<alt>+o"),
             on_press=lambda: events.append("press"),
             on_release=lambda: events.append("release"),
         )
         # 直接驱动内部回调（等价 pynput 线程注入），验证事件配对
         backend._handle_press(CTRL)
         backend._handle_press(keyboard.Key.alt_l)
-        backend._handle_press(T)
-        backend._handle_press(T)  # 键重复
-        backend._handle_release(T)
+        backend._handle_press(O)
+        backend._handle_press(O)  # 键重复
+        backend._handle_release(O)
         assert events == ["press", "release"]
