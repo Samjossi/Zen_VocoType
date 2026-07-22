@@ -127,6 +127,7 @@ def run(
 
             # -------------------------------------------------- Service 拉起
             notifier.notify_starting()
+            spawn_t0 = time.monotonic()  # T1/T2 计时零点（选型七：拉起时刻）
             if not service_running:
                 try:
                     service_proc = deps.spawn(
@@ -162,6 +163,7 @@ def run(
                         if service_proc is not None
                         else None
                     ),
+                    t0=spawn_t0,
                 )
             except (
                 ReadyTimeoutError,
@@ -204,6 +206,7 @@ def run(
             # -------------------------------------------------- 完成
             elapsed = time.monotonic() - started
             logger.info("编排完成（总耗时 {:.1f}s，模式 {}）", elapsed, plan.mode)
+            logger.info("启动耗时 T_total_s={:.3f} mode={}", elapsed, plan.mode)
             notifier.notify_done(elapsed)
             # 正常路径：弹出全部清理回调，🔴 不杀子进程（选型七方案 A）
             stack.pop_all()

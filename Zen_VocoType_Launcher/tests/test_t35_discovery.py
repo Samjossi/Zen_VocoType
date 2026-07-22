@@ -76,6 +76,54 @@ class TestPidRunningMatch:
         )
 
 
+class TestAppImageExeMatch:
+    """AppImage 形态身份匹配（T4.8 实测缺口回归固化）。
+
+    载荷 /proc/exe 为 /tmp/.mount_*/usr/... 挂载点内路径，与 .AppImage
+    路径永不相等；身份以 APPIMAGE 环境变量精确比对。
+    """
+
+    def test_appimage_env_match(self, monkeypatch):
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._exe_of",
+            lambda pid: "/tmp/.mount_XxYY12/usr/zen_vocotype_service/zen_vocotype_service",
+        )
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._appimage_env_of",
+            lambda pid: "/opt/apps/Zen_VocoType_Service.AppImage",
+        )
+        assert is_pid_running_match(
+            os.getpid(), expected_exe="/opt/apps/Zen_VocoType_Service.AppImage"
+        )
+
+    def test_appimage_env_mismatch_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._exe_of",
+            lambda pid: "/tmp/.mount_XxYY12/usr/zen_vocotype_service/zen_vocotype_service",
+        )
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._appimage_env_of",
+            lambda pid: "/opt/Other/Other.AppImage",
+        )
+        assert not is_pid_running_match(
+            os.getpid(), expected_exe="/opt/apps/Zen_VocoType_Service.AppImage"
+        )
+
+    def test_non_appimage_process_rejected(self, monkeypatch):
+        """无 APPIMAGE 环境变量的进程（如 onedir 直接执行）不得误判命中。"""
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._exe_of",
+            lambda pid: "/usr/bin/python3",
+        )
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._appimage_env_of",
+            lambda pid: None,
+        )
+        assert not is_pid_running_match(
+            os.getpid(), expected_exe="/opt/apps/Zen_VocoType_Service.AppImage"
+        )
+
+
 class TestDiscoverComponent:
     def test_absent(self, tmp_path):
         result = discover_component(str(tmp_path / "none.lock"), name="service")

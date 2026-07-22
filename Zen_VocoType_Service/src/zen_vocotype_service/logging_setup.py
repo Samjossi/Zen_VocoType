@@ -36,17 +36,26 @@ def setup_logging(settings: Settings) -> None:
     global _configured
     if _configured:
         return
-    settings.log_dir.mkdir(parents=True, exist_ok=True)
     logger.remove()
     logger.add(sys.stderr, level="INFO", format=LOG_FORMAT)
-    logger.add(
-        settings.log_dir / LOG_FILE_NAME,
-        level="DEBUG",
-        format=LOG_FORMAT,
-        rotation=LOG_ROTATION,
-        retention=LOG_RETENTION,
-        encoding="utf-8",
-    )
+    # 日志不可写容错（T4.6 验收口径：不崩溃、stderr 兜底、记 warning——
+    # 如 AppImage 挂载点内误配 log_dir 的场景）
+    try:
+        settings.log_dir.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            settings.log_dir / LOG_FILE_NAME,
+            level="DEBUG",
+            format=LOG_FORMAT,
+            rotation=LOG_ROTATION,
+            retention=LOG_RETENTION,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.warning(
+            "日志文件 sink 初始化失败（{}），仅 stderr 输出：{}",
+            settings.log_dir,
+            exc,
+        )
     _configured = True
 
 

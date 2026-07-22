@@ -86,6 +86,37 @@ class TestProdPlan:
         assert plan.service.argv == [str(svc)]
         assert plan.client.argv == [str(cli)]
 
+    def test_sibling_onedir_convention(self, tmp_path, monkeypatch):
+        """邻接目录 onedir 形态：目录名/同名二进制（T4.4 回填，tools/build.py 布局）。"""
+        svc_dir = tmp_path / "zen_vocotype_service"
+        svc_dir.mkdir()
+        svc = svc_dir / "zen_vocotype_service"
+        svc.touch()
+        cli_dir = tmp_path / "zen_vocotype_client"
+        cli_dir.mkdir()
+        cli = cli_dir / "zen_vocotype_client"
+        cli.touch()
+        monkeypatch.setattr(sys, "argv", [str(tmp_path / "Zen_VocoType_Launcher.AppImage")])
+        plan = build_plan(Settings(), dev_mode=False)
+        assert plan.service.argv == [str(svc)]
+        assert plan.client.argv == [str(cli)]
+
+    def test_sibling_via_appimage_env(self, tmp_path, monkeypatch):
+        """AppImage 形态：邻接基准取 APPIMAGE 环境变量目录而非 argv[0] 挂载点。
+
+        （T4.4 联调实测：argv[0] 为 /tmp/.mount_*/usr/... 载荷路径，邻接失效）
+        """
+        svc = tmp_path / "Zen_VocoType_Service.AppImage"
+        svc.touch()
+        cli = tmp_path / "Zen_VocoType_Client.AppImage"
+        cli.touch()
+        monkeypatch.setenv("APPIMAGE", str(tmp_path / "Zen_VocoType_Launcher.AppImage"))
+        # argv[0] 模拟挂载点内载荷路径——应被 APPIMAGE 分支覆盖
+        monkeypatch.setattr(sys, "argv", ["/tmp/.mount_Fake12/usr/zen_vocotype_launcher/zen_vocotype_launcher"])
+        plan = build_plan(Settings(), dev_mode=False)
+        assert plan.service.argv == [str(svc)]
+        assert plan.client.argv == [str(cli)]
+
     def test_missing_everywhere(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", [str(tmp_path / "launcher")])
         with pytest.raises(TargetResolutionError, match="未找到 service 二进制"):

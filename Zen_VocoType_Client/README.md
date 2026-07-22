@@ -41,7 +41,8 @@
 
 ## 配置（`config.yaml`，本组件唯一配置源）
 
-优先级：环境变量（`ZEN_VOCOTYPE_CLIENT_*`）> `config.yaml` > 代码默认值。
+优先级：环境变量（`ZEN_VOCOTYPE_CLIENT_*`）> 用户配置文件 > `config.yaml` > 代码默认值。
+（用户配置文件：`$XDG_CONFIG_HOME/zen_vocotype/user_config.yaml`，三组件共享，阶段 4 T4.1b 新增层）
 
 | 配置项 | 默认 | 说明 |
 |:---|:---|:---|
@@ -54,7 +55,7 @@
 | `enable_sound_notify` | `false` | 通知声音辅助 |
 | `loading_poll_interval_ms` | `3000` | 服务端模型加载中（橙灯）的 health 轮询间隔；就绪后托盘自动转绿 |
 | `loading_poll_max_count` | `120` | 加载中轮询上限（默认约 6 分钟）；达上限停止并通知，需手动重试 |
-| `log_dir` | `<组件根>/logs` | 日志目录（loguru 双 sink，10MB×5 轮转） |
+| `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | 日志目录（loguru 双 sink，10MB×5 轮转；阶段 4 T4.1 迁 XDG） |
 
 热键表达式写法：`<ctrl>+<alt>+o`、`<ctrl>+<shift>+a`、`<f9>` 等 pynput 组合键
 语法；修饰键支持 `<ctrl>/<alt>/<shift>/<cmd>`，必须恰好含一个非修饰主键。
@@ -69,7 +70,7 @@
 | 通知「服务端正在加载模型」 | 服务端在线但模型未就绪（错误码 2001），等托盘转绿 |
 | 托盘橙灯「连接中…」 | 服务端在线、模型加载中。客户端每 3s 自动轮询（`loading_poll_interval_ms`），模型就绪后自动转绿，无需操作；超过 `loading_poll_max_count` 次（默认约 6 分钟）未就绪则停止轮询并通知，此时从托盘菜单「重试连接服务端」 |
 | 通知「服务端模型加载等待超时」 | 轮询达上限仍未就绪（大模型冷启动过慢或服务端异常）。确认服务端日志后，托盘菜单「重试连接服务端」 |
-| 热键无响应 | ① 表达式非法会在启动时报错退出（查 logs/client.log）；② 组合被其他应用占用——改 `hotkey` 配置；🔴 勿用 `<ctrl>+``（与旧版 GridChat 冲突）、`<ctrl>+<alt>+v` 或 `<ctrl>+<alt>+t`（本机已占用） |
+| 热键无响应 | ① 表达式非法会在启动时报错退出（查 `log_dir`/client.log）；② 组合被其他应用占用——改 `hotkey` 配置；🔴 勿用 `<ctrl>+``（与旧版 GridChat 冲突）、`<ctrl>+<alt>+v` 或 `<ctrl>+<alt>+t`（本机已占用） |
 | 退出码 3 | 无可用录音输入设备或设备不支持 16kHz/16bit/单声道；查 `input_device` 配置 |
 | 退出码 4 | pynput 无法连接 X11 显示（Wayland 环境 v1 不支持热键，后端抽象已预留 evdev/Portal） |
 | 粘贴后剪贴板未恢复 | 你在恢复延迟窗口内复制了新内容（恢复自动放弃，属竞态保护的正常行为）；或目标应用读取超 500ms——调大 `paste_restore_delay_ms` |
@@ -79,6 +80,15 @@
 
 系统托盘不可用（最小化 WM 等）时自动降级：通知改走 `notify-send` 并记 warning
 日志；托盘菜单不可用（退出请发 SIGTERM）。降级路径全程有日志，无静默降级。
+
+## 打包产物（阶段 4）
+
+onedir 与 AppImage 双形态经 `tools/build.py --component client [--appimage]` 构建
+（详见仓库根 README「打包产物使用说明」节）。本组件要点：
+
+- spec 排除 torch/FunASR 系（推理全在 Service，经 Socket）
+- 托盘图标随包（`_MEIPASS/assets`），缺失记 warning 降级（不静默）
+- `--screenshot <目录>` 截图自检在打包形态同样可用
 
 ## 架构（阶段 2 实现）
 

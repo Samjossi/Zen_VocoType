@@ -56,15 +56,21 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 
 ## 配置（单一配置源）
 
-`src/zen_vocotype_service/config.py` 的 `Settings` + `config.yaml` + 环境变量
-（前缀 `ZEN_VOCOTYPE_SERVICE_`），优先级：显式入参 > 环境变量 > config.yaml > 默认值。
+`src/zen_vocotype_service/config.py` 的 `Settings` + `config.yaml` + 用户配置文件 + 环境变量
+（前缀 `ZEN_VOCOTYPE_SERVICE_`），优先级：显式入参 > 环境变量 > 用户配置文件 > config.yaml > 默认值。
+
+**用户配置文件**（阶段 4 T4.1b）：`$XDG_CONFIG_HOME/zen_vocotype/user_config.yaml`
+（回退 `~/.config/...`，路径唯一出处为契约库 `paths.DEFAULT_USER_CONFIG_PATH`），
+三组件共享单文件、各自仅拾取自身声明字段；仅承载覆盖项（如 `models_dir`），
+由托盘「设置模型目录…」写入（原子写；损坏回退默认值 + warning，不静默不崩溃）。
+🔴 打包形态（AppImage）包内 config.yaml 只读，运行时持久化只能落用户配置文件。
 
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
 | `socket_path` | 契约库 `paths.DEFAULT_SOCKET_PATH`（`$XDG_RUNTIME_DIR/zen_vocotype.sock`） | 仅允许覆盖，默认值勿照抄 |
-| `models_dir` | 组件 `models/` | MODELSCOPE_CACHE 指向（入口第一行硬设置，顺序敏感） |
+| `models_dir` | 契约库 `paths.DEFAULT_MODELS_DIR`（`$XDG_DATA_HOME/zen_vocotype/models`，回退 `~/.local/share/...`） | MODELSCOPE_CACHE 指向（入口第一行硬设置，顺序敏感）；🔴 默认不落组件根（AppImage 只读挂载写失败，阶段 4 T4.1） |
 | `default_model` | `paraformer-large` | 必须存在于注册表，否则启动报错退出 |
-| `log_dir` | 组件 `logs/` | loguru 轮转（10MB × 5） |
+| `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | loguru 轮转（10MB × 5）；三组件共享目录、文件名区分 |
 | `models` | 内置两条（见下） | 模型注册表（config.yaml 内嵌） |
 | `infer_timeout_s` | 60 | 推理超时预算（依据见验收记录实测） |
 | `queue_max_pending` | 4 | 推理队列积压阈值，超过拒绝新请求 |
@@ -93,6 +99,16 @@ default_model: paraformer-large
 - 注册表条目支持挂附属 VAD / 标点模型
 - 模型缓存布局即 modelscope 现行布局（`models/models/iic--<名>/snapshots/master`），
   缓存命中则离线加载，未命中在线下载（进度以日志呈现）
+
+### 自选模型目录（托盘「设置模型目录…」，T4.1b）
+
+- 托盘菜单选定目录 → 校验（🔴 不存在 / 不可写 / AppImage 挂载点内三分支拒绝，
+  不静默）→ 写用户配置文件 → **下次启动生效**（MODELSCOPE_CACHE 顺序红线，
+  v1 不做运行期热切换）
+- 菜单内禁用态行展示当前生效目录；启动日志输出 `models_dir` 生效值与来源层
+- 切换后目录为空：首次使用走 `model_download` 通道自动下载，或手工放置既有
+  modelscope 缓存（保持 `models/iic--<名>/...` 布局）；🔴 v1 不做旧目录模型
+  迁移/复制，请手工搬移
 
 ## 协议行为摘要
 
@@ -131,10 +147,21 @@ Zen_VocoType_Service/
 │   └── tray/               # 系统托盘（icon_loader 双环境解析 + ServiceTray）
 ├── assets/                 # 托盘图标四档（icon_{32,64,128,256}.png，复制自 GridChat_Service/asset）
 │                           #   + 自检音频 selftest_16k.pcm（来源见 loader 注释）
-├── logs/                   # 运行日志 + 阶段 1 实测数据（phase1_measurements.json）
-├── models/                 # MODELSCOPE_CACHE（模型外置目录）
+├── logs/                   # 历史运行日志 + 阶段 1 实测数据（phase1_measurements.json）；
+│                           #   ⚠️ 新日志默认落 XDG 状态目录（见配置表 log_dir）
+├── models/                 # 历史模型缓存；⚠️ MODELSCOPE_CACHE 默认已迁 XDG 数据目录
 └── tests/                  # pytest（slow 标记为真实模型/进程级测试）
 ```
+
+## 打包产物（阶段 4）
+
+onedir 与 AppImage 双形态经 `tools/build.py --component service [--appimage]` 构建
+（详见仓库根 README「打包产物使用说明」节）。本组件要点：
+
+- torch/FunASR/modelscope 经 spec `collect_all` 显式收编（延迟 import 静态分析不可见）
+- 模型默认 XDG 数据目录（`~/.local/share/zen_vocotype/models`），🔴 不随包；
+  离线放置步骤与托盘「设置模型目录…」见根 README
+- 打包形态日志默认 XDG 状态目录；不可写时降级 stderr + warning（不崩溃）
 
 ## 测试
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from pydantic import Field
 
-from zen_vocotype_protocol.paths import DEFAULT_SOCKET_PATH
+from zen_vocotype_protocol.paths import DEFAULT_LOG_DIR, DEFAULT_SOCKET_PATH
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
 
 #: 组件根目录（基于本文件自身位置解析；打包形态限制见 component_root 文档）
@@ -65,7 +65,9 @@ class Settings(ComponentSettings):
     #: 达上限停止轮询并提示手动重试——落实「禁止后台无限重试」红线（选型二）
     loading_poll_max_count: int = Field(default=120, ge=1)
 
-    log_dir: Path = COMPONENT_ROOT / "logs"
+    #: 日志目录。默认 XDG 状态目录（契约库唯一出处）；🔴 禁止组件根目录内
+    #: （AppImage 只读挂载点写入必失败，阶段 4 T4.1 整改）
+    log_dir: Path = DEFAULT_LOG_DIR
 
 
 def validate_startup(settings: Settings) -> None:

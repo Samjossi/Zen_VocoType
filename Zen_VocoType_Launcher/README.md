@@ -37,14 +37,15 @@ python main.py --dev
 |:---:|:---|:---|
 | 0 | 成功（含幂等命中并确认就绪） | — |
 | 2 | 已在运行（Launcher 锁冲突）或既有实例就绪确认失败 | 检查运行中实例状态；实例异常时手动结束后重试 |
-| 3 | 服务端拉起/就绪失败（含超时、进程等待期死亡、协议版本不符） | 看 `logs/child_service.log`；模型未下载时首启耗时长，可调大 `model_ready_timeout_s` |
-| 4 | 客户端拉起失败（含拉起后立即退出） | 看 `logs/child_client.log`；无显示环境（$DISPLAY）时客户端无法启动 |
+| 3 | 服务端拉起/就绪失败（含超时、进程等待期死亡、协议版本不符） | 看 `log_dir`/child_service.log；模型未下载时首启耗时长，可调大 `model_ready_timeout_s` |
+| 4 | 客户端拉起失败（含拉起后立即退出） | 看 `log_dir`/child_client.log；无显示环境（$DISPLAY）时客户端无法启动 |
 | 5 | 配置/路径错误（组件缺失、目标解析失败、Socket 被外部占用、配置非法） | 见下方「目标解析」与「故障排查」 |
-| 6 | 内部错误（未预期异常兜底） | 看 `logs/launcher.log` |
+| 6 | 内部错误（未预期异常兜底） | 看 `log_dir`/launcher.log |
 
 ## 配置（`config.yaml`，单一配置源）
 
-优先级：环境变量（`ZEN_VOCOTYPE_LAUNCHER_*`）> `config.yaml` > 代码默认值。
+优先级：环境变量（`ZEN_VOCOTYPE_LAUNCHER_*`）> 用户配置文件 > `config.yaml` > 代码默认值。
+（用户配置文件：`$XDG_CONFIG_HOME/zen_vocotype/user_config.yaml`，三组件共享，阶段 4 T4.1b 新增层）
 
 | 配置项 | 默认 | 说明 |
 |:---|:---|:---|
@@ -55,7 +56,7 @@ python main.py --dev
 | `ready_poll_interval_ms` | 200 | ready 轮询间隔（毫秒） |
 | `terminate_grace_seconds` | 5 | 进程组回收 SIGTERM→SIGKILL 宽限（秒） |
 | `service_binary` / `client_binary` | 无 | 正式模式二进制显式绝对路径（默认按邻接约定自动解析） |
-| `log_dir` | 组件根 `logs/` | 日志目录 |
+| `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | 日志目录（阶段 4 T4.1 迁 XDG） |
 
 ## 目标解析（正式模式）
 
@@ -82,6 +83,17 @@ python main.py --dev
 
 两模式可并行运行互不干扰（dev 模式经环境变量向子进程注入 dev Socket 覆盖）。
 
+## 打包产物（阶段 4）
+
+onedir 与 AppImage 双形态经 `tools/build.py --component launcher [--appimage]` 构建
+（详见仓库根 README「打包产物使用说明」节）。本组件要点：
+
+- 零 Qt 零 ML，spec 全排除（产物约 17MiB）
+- AppImage 形态邻接解析经 `APPIMAGE` 环境变量定位（挂载点内路径无邻接意义）；
+  既有实例身份识别经 `/proc/<pid>/environ` 的 `APPIMAGE` 精确比对
+- 冷启动耗时结构化字段 `启动耗时 T1_socket_connect_s=/T2_model_ready_s=/T_total_s=`
+  写入 launcher.log（阶段 4 选型七口径）
+
 ## 故障排查
 
 | 现象 | 处理 |
@@ -91,7 +103,7 @@ python main.py --dev
 | 退出码 5「Socket 被外部占用」 | Socket 路径被非本组件进程占用；🔴 Launcher 不会 unlink 他人 Socket，请配置 `socket_path` 换路径 |
 | 无桌面通知 | `notify-send` 缺席时已降级为仅日志（warning），行为不受影响 |
 
-日志：`logs/launcher.log`（编排）、`logs/child_service.log` / `logs/child_client.log`
+日志：`log_dir`/launcher.log（编排）、`log_dir`/child_service.log / `log_dir`/child_client.log（默认 `$XDG_STATE_HOME/zen_vocotype/logs`）
 （两端子进程输出，每次拉起新开）。
 
 ## 测试

@@ -101,7 +101,18 @@ def _build_dev_plan(settings: Settings) -> LaunchPlan:
 
 
 def _launcher_dir() -> Path:
-    """Launcher 自身所在目录（邻接约定的基准）。"""
+    """Launcher 自身所在目录（邻接约定的基准）。
+
+    双形态解析（阶段 4 T4.4 联调落地）：
+
+    - AppImage：``sys.argv[0]`` 指向 FUSE 挂载点内的载荷二进制，挂载点
+      无邻接意义且只读——须以 AppImage runtime 注入的 ``APPIMAGE`` 环境
+      变量取 .AppImage 文件自身所在目录
+    - onedir / 源码：``sys.argv[0]`` 解析
+    """
+    appimage = os.environ.get("APPIMAGE")
+    if appimage:
+        return Path(appimage).resolve().parent
     return Path(sys.argv[0]).resolve().parent
 
 
@@ -143,15 +154,23 @@ def _prod_target(
 
 
 def _build_prod_plan(settings: Settings) -> LaunchPlan:
+    # 邻接约定回填真产物（阶段 4 T4.4）：AppImage 单文件优先，onedir 目录
+    # 形式为「目录名/同名二进制」（tools/build.py 产物布局）
     service_bin = _resolve_prod_binary(
         settings.service_binary,
         name="service",
-        sibling_names=("Zen_VocoType_Service.AppImage", "Zen_VocoType_Service"),
+        sibling_names=(
+            "Zen_VocoType_Service.AppImage",
+            "zen_vocotype_service/zen_vocotype_service",
+        ),
     )
     client_bin = _resolve_prod_binary(
         settings.client_binary,
         name="client",
-        sibling_names=("Zen_VocoType_Client.AppImage", "Zen_VocoType_Client"),
+        sibling_names=(
+            "Zen_VocoType_Client.AppImage",
+            "zen_vocotype_client/zen_vocotype_client",
+        ),
     )
     log_dir = Path(settings.log_dir)
     return LaunchPlan(

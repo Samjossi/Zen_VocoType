@@ -32,18 +32,23 @@ def setup_logging(log_dir, level: str = "INFO") -> Path:
     :returns: 日志文件路径（供失败通知提示用户查看位置）
     """
     log_path = Path(log_dir)
-    log_path.mkdir(parents=True, exist_ok=True)
     log_file = log_path / "launcher.log"
 
     logger.remove()  # 去除 loguru 默认 stderr sink，避免重复
     logger.add(sys.stderr, level=level, format=_LOG_FORMAT)
-    logger.add(
-        log_file,
-        level="DEBUG",
-        format=_LOG_FORMAT,
-        rotation=LOG_ROTATION_BYTES,
-        retention=LOG_RETENTION_COUNT,
-        encoding="utf-8",
-    )
+    # 日志不可写容错（T4.6 验收口径：不崩溃、stderr 兜底、记 warning）；
+    # 返回值保持既定路径（供失败通知提示位置），仅 sink 创建受保护
+    try:
+        log_path.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            log_file,
+            level="DEBUG",
+            format=_LOG_FORMAT,
+            rotation=LOG_ROTATION_BYTES,
+            retention=LOG_RETENTION_COUNT,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.warning("日志文件 sink 初始化失败（{}），仅 stderr 输出：{}", log_path, exc)
     logger.info("启动器日志初始化完成，日志文件：{}", log_file)
     return log_file

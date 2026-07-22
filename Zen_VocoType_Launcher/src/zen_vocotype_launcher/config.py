@@ -13,7 +13,11 @@ from pathlib import Path
 
 from pydantic import Field
 
-from zen_vocotype_protocol.paths import DEFAULT_SOCKET_PATH, DEV_SOCKET_PATH
+from zen_vocotype_protocol.paths import (
+    DEFAULT_LOG_DIR,
+    DEFAULT_SOCKET_PATH,
+    DEV_SOCKET_PATH,
+)
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
 
 #: 组件根目录（基于本文件自身位置解析；打包形态限制见 component_root 文档）
@@ -35,15 +39,17 @@ class Settings(ComponentSettings):
 
     socket_path: str = DEFAULT_SOCKET_PATH
     dev_socket_path: str = DEV_SOCKET_PATH
-    log_dir: Path = COMPONENT_ROOT / "logs"
+    #: 日志目录。默认 XDG 状态目录（契约库唯一出处）；🔴 禁止组件根目录内
+    #: （AppImage 只读挂载点写入必失败，阶段 4 T4.1 整改）
+    log_dir: Path = DEFAULT_LOG_DIR
 
     #: 阶段一等待上限（秒）：Socket 可连接。
     #: 依据：阶段 1 验收冷启动 Socket 可连 ≤5s 的 3 倍余量
     socket_wait_timeout_s: float = Field(default=15.0, gt=0)
 
     #: 阶段二等待上限（秒）：模型就绪（ready 接口确认）。
-    #: 依据：初值覆盖冷机模型加载上限，实施期以 P99 冷启动实测校准
-    #: 并回填 阶段3选型文档（选型二）
+    #: 回填校准：阶段 3 dev P99 8.5s；阶段 4 打包 AppImage P99 12.6s（N=5，
+    #: 缓存模型），首启下载实测 132s——180s 同时覆盖缓存与首启下载场景，保持
     model_ready_timeout_s: float = Field(default=180.0, gt=0)
 
     #: ready 轮询间隔（毫秒）。

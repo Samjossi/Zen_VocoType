@@ -14,7 +14,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
-from zen_vocotype_protocol.paths import DEFAULT_SOCKET_PATH
+from zen_vocotype_protocol.paths import (
+    DEFAULT_LOG_DIR,
+    DEFAULT_MODELS_DIR,
+    DEFAULT_SOCKET_PATH,
+)
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
 
 #: 组件根目录（基于本文件自身位置解析；打包形态限制见 component_root 文档）
@@ -76,9 +80,12 @@ class Settings(ComponentSettings):
     model_config = component_model_config(__file__, "ZEN_VOCOTYPE_SERVICE_")
 
     socket_path: str = DEFAULT_SOCKET_PATH
-    models_dir: Path = COMPONENT_ROOT / "models"
+    #: 模型根目录（MODELSCOPE_CACHE 指向）。默认 XDG 数据目录（契约库唯一出处），
+    #: 🔴 禁止组件根目录内——AppImage 只读挂载点写入必失败（旧事故「随包模型死重」同款）
+    models_dir: Path = DEFAULT_MODELS_DIR
     default_model: str = "paraformer-large"
-    log_dir: Path = COMPONENT_ROOT / "logs"
+    #: 日志目录。默认 XDG 状态目录（契约库唯一出处，理由同 models_dir）
+    log_dir: Path = DEFAULT_LOG_DIR
 
     models: dict[str, ModelEntry] = DEFAULT_MODEL_REGISTRY
     infer_timeout_s: float = DEFAULT_INFER_TIMEOUT_S

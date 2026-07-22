@@ -186,12 +186,16 @@ def wait_for_readiness(
     poll_interval_s: float,
     process_alive: Callable[[], bool] | None = None,
     process_exit_info: Callable[[], str] | None = None,
+    t0: float | None = None,
 ) -> None:
     """两阶段就绪等待：Socket 可连 → ``ready`` 模型就绪。
 
     :param client: 协议客户端（本函数持有并关闭连接）
     :param process_alive: 子进程存活检查（None 跳过并行死亡检测）
     :param process_exit_info: 子进程退出详情（退出码 + 日志尾部，失败诊断用）
+    :param t0: 拉起时刻（``time.monotonic()``）；提供时输出结构化耗时字段
+        ``启动耗时 T1_socket_connect_s= / T2_model_ready_s=``（阶段 4 选型七
+        方案 A 埋点，冷启动测量口径即用户真实感知）
     :raises ServiceUnavailableError: 等待期间子进程已退出（🔴 禁止干等超时）
     :raises ReadyTimeoutError: 任一阶段超时
     :raises VersionMismatchError / RequestFailedError: 协议层失败
@@ -218,6 +222,8 @@ def wait_for_readiness(
         timeout_message=f"阶段一超时：{socket_wait_timeout_s}s 内 Socket 不可连接",
     )
     logger.debug("阶段一通过：Socket 可连接")
+    if t0 is not None:
+        logger.info("启动耗时 T1_socket_connect_s={:.3f}", time.monotonic() - t0)
 
     try:
         # 版本握手（health 首请求，协议 §5）
@@ -249,5 +255,7 @@ def wait_for_readiness(
             timeout_message=f"阶段二超时：{model_ready_timeout_s}s 内模型未就绪",
         )
         logger.info("阶段二通过：模型已就绪（current_model={}）", client.ready().get("current_model"))
+        if t0 is not None:
+            logger.info("启动耗时 T2_model_ready_s={:.3f}", time.monotonic() - t0)
     finally:
         client.close()

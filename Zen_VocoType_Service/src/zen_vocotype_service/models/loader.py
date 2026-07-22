@@ -12,14 +12,22 @@
 第二道防线，但不替代入口保证。
 """
 
+import sys
 from pathlib import Path
 
 from zen_vocotype_service.config import COMPONENT_ROOT, ModelEntry
 from zen_vocotype_service.logging_setup import logger
 
 #: 自检音频资产（真实语音片段，来源：paraformer-large 模型仓库示例
-#: asr_example.wav 转 16kHz/16bit/单声道 PCM 并截取前 3 秒）
-SELFTEST_PCM_PATH: Path = COMPONENT_ROOT / "assets" / "selftest_16k.pcm"
+#: asr_example.wav 转 16kHz/16bit/单声道 PCM 并截取前 3 秒）。
+#: 双环境解析（与 tray/icon_loader 同一 ``_MEIPASS`` 约定，阶段 4 T4.2 修：
+#: 原 ``COMPONENT_ROOT / "assets"`` 在打包形态指向产物根而非 ``_internal``）；
+#: 延迟为函数调用而非模块常量——``_MEIPASS`` 须在运行期读取
+def _selftest_pcm_path() -> Path:
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None:  # PyInstaller 打包形态
+        return Path(meipass) / "assets" / "selftest_16k.pcm"
+    return COMPONENT_ROOT / "assets" / "selftest_16k.pcm"
 
 #: FunASR 推理归一化系数（16bit PCM → float32）
 PCM_NORMALIZE: float = 32768.0
@@ -86,9 +94,10 @@ def selftest(loaded: LoadedModel) -> None:
 
     :raises ModelLoadError: 自检失败（🔴 加载成功不等于可用）
     """
-    if not SELFTEST_PCM_PATH.exists():
-        raise ModelLoadError(f"自检音频缺失: {SELFTEST_PCM_PATH}")
-    audio = pcm_to_float_array(SELFTEST_PCM_PATH.read_bytes())
+    pcm_path = _selftest_pcm_path()
+    if not pcm_path.exists():
+        raise ModelLoadError(f"自检音频缺失: {pcm_path}")
+    audio = pcm_to_float_array(pcm_path.read_bytes())
     try:
         result = loaded.model.generate(
             input=audio,

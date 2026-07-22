@@ -63,6 +63,31 @@ def read_pid_file(lock_path: str) -> int | None:
     return pid if pid > 0 else None
 
 
+def _exe_of(pid: int) -> str | None:
+    """读取 ``/proc/<pid>/exe``（不可读返回 None 并记 warning）。"""
+    try:
+        return os.readlink(f"/proc/{pid}/exe")
+    except OSError as exc:
+        logger.warning("/proc/{}/exe 不可读（{}），按不匹配处理", pid, exc)
+        return None
+
+
+def _appimage_env_of(pid: int) -> str | None:
+    """读取载荷进程 ``APPIMAGE`` 环境变量（AppImage runtime 注入）。
+
+    非 AppImage 形态进程无此变量返回 None；/proc 不可读同样返回 None。
+    """
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    for entry in raw.split(b"\0"):
+        if entry.startswith(b"APPIMAGE="):
+            return entry[len(b"APPIMAGE="):].decode("utf-8", errors="replace")
+    return None
+
+
 def is_pid_running_match(
     pid: int,
     *,
@@ -84,12 +109,19 @@ def is_pid_running_match(
         return False
 
     if expected_exe is not None:
-        try:
-            actual_exe = os.readlink(f"/proc/{pid}/exe")
-        except OSError as exc:
-            logger.warning("/proc/{}/exe 不可读（{}），按不匹配处理", pid, exc)
+        actual_exe = _exe_of(pid)
+        if actual_exe is None:
             return False
-        if actual_exe != expected_exe:
+        exe_match = actual_exe == expected_exe
+        if not exe_match and expected_exe.endswith(".AppImage"):
+            # AppImage 形态回退（阶段 4 T4.8 实测缺口）：载荷 /proc/exe 指向
+            # FUSE 挂载点内路径（随机 .mount_* 前缀），与 .AppImage 路径永不
+            # 相等——以 runtime 注入的 APPIMAGE 环境变量精确比对（等值语义）
+            env_path = _appimage_env_of(pid)
+            exe_match = env_path is not None and os.path.realpath(
+                env_path
+            ) == os.path.realpath(expected_exe)
+        if not exe_match:
             logger.debug(
                 "PID {} exe 不匹配：期望 {}，实际 {}", pid, expected_exe, actual_exe
             )

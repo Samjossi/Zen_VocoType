@@ -52,3 +52,6 @@ logs/
 # 操作系统
 .DS_Store
 Thumbs.db
+
+# 构建工具本地二进制（appimagetool 等，不入库；获取方式见 README 打包节）
+tools/bin/

@@ -5,6 +5,7 @@
 - ``python main.py``              正常启动（热键/录音/识别/输出/托盘全装配）
 - ``python main.py --screenshot <目录>``  托盘布局截图自检（开发自查工具，
   见 ``tray/selftest.py``；🔴 仅开发用途）
+- ``python main.py --version``          打印版本并退出（构建冒烟探针）
 
 退出码：0 正常退出；2 配置校验失败；3 录音设备不可用；4 热键后端启动失败；
 5 已有客户端实例运行（单实例锁冲突）。
@@ -15,6 +16,15 @@ from pathlib import Path
 
 
 def main() -> int:
+    # --version 构建冒烟探针（阶段 4 T4.2）：须在配置/日志初始化前可答、零写盘
+    if "--version" in sys.argv:
+        from loguru import logger
+
+        from zen_vocotype_client import __version__
+
+        logger.info("Zen_VocoType_Client v{}", __version__)
+        return 0
+
     # 启动顺序：日志 → 配置校验 → 装配启动 → Qt 事件循环
     from zen_vocotype_client.config import Settings, validate_startup
     from zen_vocotype_client.logging_setup import setup_logging

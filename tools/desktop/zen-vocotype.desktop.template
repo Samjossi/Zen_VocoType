@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Zen_VocoType
+GenericName=Voice Typing
+Comment=按住热键说话，松开自动识别并粘贴
+Exec=@EXEC@
+Icon=zen-vocotype
+Categories=Utility;Accessibility;
+Keywords=voice;speech;asr;typing;
+Terminal=false
+StartupNotify=false

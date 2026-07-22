@@ -60,6 +60,80 @@ LAUNCHER_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_launcher.lock"
 DEV_LAUNCHER_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_launcher_dev.lock")
 
 # ---------------------------------------------------------------------------
+# XDG 用户数据/状态目录（阶段 4 T4.1，旧事故「路径错位」整改落地）
+# ---------------------------------------------------------------------------
+# 背景：打包形态（AppImage）程序目录为只读挂载点，模型/日志默认值若仍落在
+# 组件根目录内（``COMPONENT_ROOT / "models" | "logs"``）则运行必失败——
+# 与旧 GridChat「随包模型从未生效」「日志写到 cwd 继承目录」同款根因。
+# 因此运行时写入类路径默认值一律落 XDG 用户目录（选型九：模型 data、
+# 日志 state、配置 config、运行 runtime 分层），唯一出处为本模块；
+# 三组件配置仅允许覆盖（pydantic-settings 环境变量/config.yaml 覆盖链保持），
+# 🔴 禁止程序目录内、🔴 禁止 cwd 相对、🔴 禁止系统临时目录。
+
+
+def _default_data_dir() -> Path:
+    """返回 XDG 数据目录：优先 ``$XDG_DATA_HOME``，回退 ``~/.local/share``。"""
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return Path(xdg_data)
+    return Path.home() / ".local" / "share"
+
+
+def _default_state_dir() -> Path:
+    """返回 XDG 状态目录：优先 ``$XDG_STATE_HOME``，回退 ``~/.local/state``。"""
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    if xdg_state:
+        return Path(xdg_state)
+    return Path.home() / ".local" / "state"
+
+
+def ensure_user_dir(path: Path) -> Path:
+    """创建用户目录（含父级）并校验可写，返回该路径。
+
+    权限校验以同目录临时文件试写为准（🔴 非系统临时目录）；任何失败抛
+    ``OSError``，由调用方转化为明确错误日志（🔴 禁止静默回退——旧事故
+    「名义在线实为缓存」的教训）。
+
+    :param path: 目标目录（应为 XDG 用户目录或其子目录）
+    :raises OSError: 创建失败或目录不可写
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    probe = path / ".zen_vocotype_write_probe"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+    finally:
+        probe.unlink(missing_ok=True)
+    return path
+
+
+#: 默认模型根目录（modelscope 缓存，MODELSCOPE_CACHE 指向；XDG data 层——
+#: 体积大、可重新下载、跨版本共享，语义同 ``~/.cache`` 但 modelscope 约定
+#: 为数据目录，与选型九分层一致）
+DEFAULT_MODELS_DIR: Path = _default_data_dir() / "zen_vocotype" / "models"
+
+#: 默认日志目录（XDG state 层——持久但可再生）。
+#: 三组件共享同一目录即可：日志文件名互不相同（service.log / client.log /
+#: launcher.log，各组件 logging_setup 单一出处），无冲突故不再分子目录
+DEFAULT_LOG_DIR: Path = _default_state_dir() / "zen_vocotype" / "logs"
+
+
+def _default_config_dir() -> Path:
+    """返回 XDG 配置目录：优先 ``$XDG_CONFIG_HOME``，回退 ``~/.config``。"""
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config:
+        return Path(xdg_config)
+    return Path.home() / ".config"
+
+
+#: 用户配置文件路径（XDG config 层，阶段 4 T4.1b）。
+#: 配置链：组件默认值（契约库）→ 包内 config.yaml → 本文件 → 环境变量；
+#: 读写行为逻辑唯一出处为契约库 ``user_config`` 模块；
+#: 🔴 禁止写包内 config.yaml（AppImage 只读挂载——写包内即下一个路径失效事故）
+DEFAULT_USER_CONFIG_PATH: Path = (
+    _default_config_dir() / "zen_vocotype" / "user_config.yaml"
+)
+
+# ---------------------------------------------------------------------------
 # 音频格式约定（recognize 请求的默认 PCM 参数，与选型 3 一致）
 # ---------------------------------------------------------------------------
 

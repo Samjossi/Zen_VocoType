@@ -28,7 +28,21 @@ def main() -> int:
         action="store_true",
         help="开发模式：用 .venv 拉起两端源码（Socket/锁与正式版隔离）",
     )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="打印版本并退出（构建冒烟探针，阶段 4 T4.2）",
+    )
     args = parser.parse_args()
+
+    # --version 须在配置/日志初始化前可答、零写盘
+    if args.version:
+        from loguru import logger
+
+        from zen_vocotype_launcher.version import LAUNCHER_VERSION
+
+        logger.info("Zen_VocoType_Launcher v{}", LAUNCHER_VERSION)
+        return 0
 
     from loguru import logger
 

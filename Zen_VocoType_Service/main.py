@@ -16,12 +16,18 @@
 
 import os
 import sys
+import warnings
 
 # ⚠️ 顺序敏感（选型五）：必须在任何 funasr/modelscope 导入之前设置，
 # 单元测试 test_main_env_order.py 固化该顺序，重构不得破坏
-from zen_vocotype_service.config import Settings
+from zen_vocotype_protocol.paths import ensure_user_dir
+from zen_vocotype_protocol.user_config import load_user_config
+from zen_vocotype_service.config import CONFIG_FILE, Settings
 
-_settings_for_env = Settings()
+# 捕获配置加载期 warning（如用户配置文件损坏回退），日志就绪后转述——🔴 禁止静默
+with warnings.catch_warnings(record=True) as _early_warnings:
+    warnings.simplefilter("always")
+    _settings_for_env = Settings()
 # 硬设置（非 setdefault）：模型缓存位置是产品契约，外部同名环境变量不得劫持
 os.environ["MODELSCOPE_CACHE"] = str(_settings_for_env.models_dir)
 
@@ -130,10 +136,60 @@ def _run_with_tray(app, shutdown_event: threading.Event) -> None:
     app.exec()
 
 
+
+def _models_dir_source() -> str:
+    """判定 models_dir 生效来源层（R9 排障：配置链复杂度上升后须可自查）。
+
+    覆盖链：默认值 → 包内 config.yaml → 用户配置文件 → 环境变量（后者优先）。
+    """
+    if os.environ.get("ZEN_VOCOTYPE_SERVICE_MODELS_DIR") is not None:
+        return "环境变量"
+    if "models_dir" in load_user_config():
+        return "用户配置文件"
+    try:
+        import yaml
+
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "models_dir" in data:
+            return "包内 config.yaml"
+    except Exception:  # 仅为来源标注，任何失败按默认值层报告（不掩盖真配置错误）
+        pass
+    return "默认值（契约库 XDG）"
+
+
 def main() -> int:
+    # --version 构建冒烟探针（阶段 4 T4.2）：须在日志初始化前可答、零写盘
+    if "--version" in sys.argv:
+        from zen_vocotype_service.version import SERVICE_VERSION
+
+        logger.info("Zen_VocoType_Service v{}", SERVICE_VERSION)
+        return 0
+
     settings = _settings_for_env
     setup_logging(settings)
     logger.info("Zen_VocoType_Service 启动中（pid={}）", os.getpid())
+
+    # 配置加载期 warning 转述（R8/R9：用户配置损坏回退等不得只停留在 stderr）
+    for w in _early_warnings:
+        logger.warning("配置加载警告: {}", w.message)
+    logger.info(
+        "模型目录生效值: {}（来源：{}）",
+        settings.models_dir,
+        _models_dir_source(),
+    )
+
+    # 模型目录创建 + 可写校验（阶段 4 T4.1）：失败记明确错误日志，
+    # 🔴 禁止静默回退——旧事故「名义在线实为缓存」的教训；此处不退出，
+    # 模型已就位直载场景只读目录仍可用，加载/下载失败由 loader 显式报错
+    try:
+        ensure_user_dir(settings.models_dir)
+    except OSError as exc:
+        logger.error(
+            "模型目录不可写（{}）：{}——模型下载将失败，仅已就位模型可加载；"
+            "请检查 models_dir 配置或目录权限",
+            settings.models_dir,
+            exc,
+        )
 
     try:
         lock = InstanceLock(_lock_path_for(settings))

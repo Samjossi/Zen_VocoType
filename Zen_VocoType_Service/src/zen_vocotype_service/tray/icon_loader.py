@@ -16,13 +16,14 @@ from pathlib import Path
 
 from loguru import logger
 
-#: 托盘图标文件名（复制自 GridChat_Service/asset 四档尺寸；
-#: 同目录 icon.png 为另一套图形（树状），经审定为错误资产，不采用已删除）
+#: 托盘图标文件名（复制自 GridChat_Service/asset 四档尺寸，阶段 4 T4.9 按
+#: 资产迁移清单 §2.1 更名 zen_vocotype_service_icon_* 销账；
+#: 同目录原 icon.png 为另一套图形（树状），经审定为错误资产，不采用已删除）
 ICON_FILENAMES: tuple[str, ...] = (
-    "icon_32.png",
-    "icon_64.png",
-    "icon_128.png",
-    "icon_256.png",
+    "zen_vocotype_service_icon_32.png",
+    "zen_vocotype_service_icon_64.png",
+    "zen_vocotype_service_icon_128.png",
+    "zen_vocotype_service_icon_256.png",
 )
 
 
