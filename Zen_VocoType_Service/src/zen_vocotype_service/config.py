@@ -45,6 +45,8 @@ class ModelEntry(BaseModel):
     local_path: Path | None = None
     vad_model_id: str | None = None
     punc_model_id: str | None = None
+    #: 展示层描述（托盘「模型清单…」用；🔴 属展示元数据，不进协议 model_info 响应）
+    description: str = ""
 
     @model_validator(mode="after")
     def _check_source_exclusive(self) -> "ModelEntry":
@@ -66,10 +68,14 @@ DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
         "model_id": "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
         "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
         "punc_model_id": "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+        "description": "通用中文离线识别（默认）。非自回归 Paraformer-large，"
+        "集成 VAD/标点/时间戳，支持数小时长音频，中文公开数据集 SOTA 级。",
     },
     "sensevoice-small": {
         "model_id": "iic/SenseVoiceSmall",
         "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "description": "多语言语音理解：中/粤/英/日/韩等 50+ 语种，"
+        "兼具情感识别与声音事件检测；推理极快（10 秒音频约 70ms）。",
     },
 }
 

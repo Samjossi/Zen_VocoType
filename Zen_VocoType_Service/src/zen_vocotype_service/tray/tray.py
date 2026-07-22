@@ -1,16 +1,18 @@
 """服务端托盘（PySide6 QSystemTrayIcon）。
 
-菜单结构（自上而下，共 7 类 11 项，T4.1b 增列模型目录两项）：
+菜单结构（自上而下，共 8 类 12 项，T4.1b 增列模型目录两项，后增模型清单）：
 
 - ① 版本项（禁用态展示，🔴 必须首行）：``Zen_VocoType_Service v<版本>`` +
   ``版本: <版本>（开发版/打包版）``——与客户端及旧 GridChat 托盘明确区分
 - ② 状态行（禁用态展示）：加载中… / 就绪 / 切换中… / 错误（原因）
 - ③ 当前模型行（禁用态展示）
 - ④ 切换模型 ► 子菜单：注册表逐键列出，当前模型前缀 ✓
-- ⑤ 模型目录行（禁用态展示当前生效目录）+ 设置模型目录…（T4.1b，
+- ⑤ 模型清单…：注册表全量详情对话框（特点/状态/缓存/官网链接，
+  进程内直读注册表，不走 Socket 自连）
+- ⑥ 模型目录行（禁用态展示当前生效目录）+ 设置模型目录…（T4.1b，
   保存后重启生效；校验三分支拒绝不静默）
-- ⑥ 打开日志目录
-- ⑦ 退出服务（与 SIGTERM 汇流同一退出序列）
+- ⑦ 打开日志目录
+- ⑧ 退出服务（与 SIGTERM 汇流同一退出序列）
 
 状态色（与客户端选型九同配色）：橙=加载中/切换中、绿=就绪、红=错误，
 以基础图标右下角叠加色点实现（不重绘整套图标资产）。
@@ -34,6 +36,7 @@ from ..context import ServiceContext
 from ..state import STATUS_ERROR, STATUS_READY
 from ..version import SERVICE_VERSION
 from .icon_loader import load_tray_icon
+from .models_dialog import show_models_dialog
 from .models_dir_picker import pick_and_persist_models_dir
 
 #: 应用展示名（版本项与 tooltip 共用，单一出处）
@@ -126,9 +129,14 @@ class ServiceTray(QObject):
                 lambda checked=False, n=name: self._on_switch_model(n)
             )
             self._model_actions[name] = action
+
+        # ⑤ 模型清单…（注册表全量详情；任何状态下可看，不依赖 worker 就绪）
+        list_action = self._menu.addAction("模型清单…")
+        list_action.setToolTip("查看全部可切换模型的特点、状态与缓存情况")
+        list_action.triggered.connect(self._on_show_models)
         self._menu.addSeparator()
 
-        # ⑤ 模型目录行（禁用态展示当前生效目录）+ 设置模型目录…（T4.1b）
+        # ⑥ 模型目录行（禁用态展示当前生效目录）+ 设置模型目录…（T4.1b）
         self._models_dir_action = self._menu.addAction(
             f"模型目录：{ctx.settings.models_dir}"
         )
@@ -138,7 +146,7 @@ class ServiceTray(QObject):
         set_dir_action.triggered.connect(self._on_set_models_dir)
         self._menu.addSeparator()
 
-        # ⑥ 打开日志目录 / ⑦ 退出服务
+        # ⑦ 打开日志目录 / ⑧ 退出服务
         log_action = self._menu.addAction("打开日志目录")
         log_action.triggered.connect(self._open_log_dir)
         quit_action = self._menu.addAction("退出服务")
@@ -251,6 +259,10 @@ class ServiceTray(QObject):
         threading.Thread(
             target=_do_switch, name="tray-model-switch", daemon=True
         ).start()
+
+    def _on_show_models(self) -> None:
+        # 模型清单…：进程内直读注册表与当前状态（对话框实现见 models_dialog）
+        show_models_dialog(self._ctx.settings, self._ctx.state.current_model)
 
     def _on_set_models_dir(self) -> None:
         # 设置模型目录…：校验/持久化/提示均在 models_dir_picker（单一出处）
