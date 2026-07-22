@@ -32,3 +32,12 @@ paste_restore_delay_ms: 500
 # 加载中轮询最大次数（默认 120 次 × 3s ≈ 6 分钟，覆盖大模型冷启动）：
 # 达上限停止轮询并通知，需从托盘菜单「重试连接服务端」手动重试
 # loading_poll_max_count: 120
+
+# 录音/识别文本落盘总开关（默认 true）：每次录音保存 WAV + 识别文本 TXT；
+# 托盘菜单「保存录音」勾选项可实时切换（持久化到用户配置文件）
+# save_recordings: true
+
+# 录音保存目录（🔴 必须绝对路径；默认 XDG data 下 zen_vocotype/recordings，
+# 默认值唯一出处在契约库 paths.get_recordings_dir，勿照抄）；
+# 托盘菜单「选择保存路径…」可图形化修改
+# recordings_dir: /自定义/绝对路径/recordings

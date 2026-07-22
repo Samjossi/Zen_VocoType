@@ -117,6 +117,17 @@ DEFAULT_MODELS_DIR: Path = _default_data_dir() / "zen_vocotype" / "models"
 DEFAULT_LOG_DIR: Path = _default_state_dir() / "zen_vocotype" / "logs"
 
 
+def get_recordings_dir() -> Path:
+    """返回默认录音/识别文本保存目录：``$XDG_DATA_HOME/zen_vocotype/recordings``。
+
+    XDG data 层——用户内容数据（不可再生，语义同 models 目录）。
+    客户端录音落盘默认值的**唯一出处**（T34）；组件配置仅允许覆盖，
+    🔴 禁止各组件另立 XDG 解析逻辑。函数形式（非导入期冻结常量）：
+    运行时解析，测试可经环境变量隔离。
+    """
+    return _default_data_dir() / "zen_vocotype" / "recordings"
+
+
 def _default_config_dir() -> Path:
     """返回 XDG 配置目录：优先 ``$XDG_CONFIG_HOME``，回退 ``~/.config``。"""
     xdg_config = os.environ.get("XDG_CONFIG_HOME")

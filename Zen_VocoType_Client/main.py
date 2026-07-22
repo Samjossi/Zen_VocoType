@@ -29,7 +29,15 @@ def main() -> int:
     from zen_vocotype_client.config import Settings, validate_startup
     from zen_vocotype_client.logging_setup import setup_logging
 
-    settings = Settings()
+    try:
+        # Settings 构造本身即执行字段校验（如 recordings_dir 绝对路径红线），
+        # pydantic ValidationError 为 ValueError 子类，与启动校验同一失败通道
+        settings = Settings()
+    except ValueError as exc:
+        from loguru import logger
+
+        logger.error("配置校验失败：{}", exc)
+        return 2
     setup_logging(settings.log_dir)
 
     try:

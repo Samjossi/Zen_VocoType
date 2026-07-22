@@ -16,9 +16,16 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from loguru import logger
 from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, Signal, QTimer
+from zen_vocotype_protocol.paths import (
+    DEFAULT_CHANNELS,
+    DEFAULT_SAMPLE_RATE,
+    DEFAULT_SAMPLE_WIDTH,
+    ensure_user_dir,
+)
 from zen_vocotype_protocol.user_config import set_user_config_value
 
 from .config import HOTKEY_ENV_VAR, Settings
@@ -29,6 +36,7 @@ from .output.paster import PasteError, create_paster
 from .output.restore import OutputPipeline
 from .recorder.recorder import DeviceUnavailableError, Recorder
 from .state_machine import Event, State, StateMachine
+from .storage import RecordingStore
 from .transcribe import worker as worker_mod
 from .transcribe.worker import NetworkWorker
 from .tray.hotkey_dialog import HotkeyCaptureDialog
@@ -48,6 +56,14 @@ MSG_HOTKEY_INVALID = "快捷键表达式非法：{}"
 MSG_HOTKEY_PERSIST_FAILED = "快捷键配置写入失败：{}——本次修改未生效"
 MSG_HOTKEY_SWITCH_FAILED = "热键监听失效，请重启客户端（{}）"
 MSG_HOTKEY_ENV_OVERRIDE = f"检测到环境变量 {HOTKEY_ENV_VAR}，重启后将以其为准"
+MSG_SAVE_WAV_FAILED = "录音保存失败：{}——识别与粘贴不受影响"
+MSG_SAVE_TXT_FAILED = "识别文本保存失败：{}（录音文件已保留）"
+MSG_SAVE_TOGGLE_PERSIST_FAILED = "录音开关配置写入失败：{}——开关状态未变更"
+MSG_SAVE_DIR_BUSY = "录音/识别进行中，请结束后再选择保存路径"
+MSG_SAVE_DIR_INVALID = "所选保存路径不可写：{}"
+MSG_SAVE_DIR_PERSIST_FAILED = "保存路径配置写入失败：{}——本次修改未生效"
+MSG_SAVE_DIR_UPDATED = "录音保存路径已更新：{}"
+MSG_SAVE_DIR_OPEN_FAILED = "保存文件夹打开失败：{}"
 
 
 def failure_message(code: int, message: str) -> str:
@@ -89,7 +105,11 @@ class ClientApp(QObject):
             self._tray: ClientTray | None = ClientTray()
             self._tray.retry_requested.connect(self._on_retry)
             self._tray.hotkey_change_requested.connect(self._on_change_hotkey)
+            self._tray.save_toggled.connect(self._on_toggle_save)
+            self._tray.choose_dir_requested.connect(self._on_choose_dir)
+            self._tray.open_dir_requested.connect(self._on_open_dir)
             self._tray.set_hotkey_label(settings.hotkey)
+            self._tray.set_save_checked(settings.save_recordings)
         else:
             logger.warning("系统托盘不可用，进入无托盘降级模式（C4）")
             self._tray = None
@@ -114,6 +134,16 @@ class ClientApp(QObject):
             max_record_seconds=settings.max_record_seconds,
             on_max_reached=self.sig_record_max.emit,  # 回调线程仅发信号
         )
+
+        # --- 录音/识别文本落盘（T34）：音频参数唯一出处在契约库 paths 冻结常量；
+        # _current_wav_path 单实例成员——状态机保证同一时刻仅一路录音-识别在途
+        self._store = RecordingStore(
+            settings.recordings_dir,
+            sample_rate=DEFAULT_SAMPLE_RATE,
+            sample_width=DEFAULT_SAMPLE_WIDTH,
+            channels=DEFAULT_CHANNELS,
+        )
+        self._current_wav_path: Path | None = None
 
         # --- 热键 ---
         combo = parse_hotkey(settings.hotkey)
@@ -316,6 +346,87 @@ class ClientApp(QObject):
         except Exception:
             logger.exception("快捷键配置回滚失败（残留新值，下次启动将生效）")
 
+    # ------------------------------------------------------------------ 录音保存（主线程，T34）
+
+    def _on_toggle_save(self, checked: bool) -> None:
+        """托盘「保存录音」勾选项：先落盘后切换（沿用 T33 顺序，🔴 禁止知行分裂）。
+
+        落盘失败回滚勾选态并通知，运行态开关保持不变。
+        """
+        try:
+            set_user_config_value("save_recordings", bool(checked))
+        except Exception as exc:
+            logger.error("录音开关配置写入失败：{}", exc)
+            if self._tray is not None:
+                self._tray.set_save_checked(self._settings.save_recordings)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_SAVE_TOGGLE_PERSIST_FAILED.format(exc),
+                key="save-toggle-failed",
+            )
+            return
+        self._settings.save_recordings = bool(checked)
+        logger.info("录音保存开关已切换并持久化：{}", checked)
+
+    def _on_choose_dir(self) -> None:
+        """托盘「选择保存路径…」：仅 IDLE 态放行，选目录后委托 _apply_save_dir。"""
+        if self._sm.state is not State.IDLE:
+            self._notifier.notify(APP_DISPLAY_NAME, MSG_SAVE_DIR_BUSY, key="save-dir-busy")
+            return
+        from PySide6.QtWidgets import QFileDialog  # 局部 import：仅此处需要
+
+        directory = QFileDialog.getExistingDirectory(
+            None, "选择录音保存路径", str(self._settings.recordings_dir)
+        )
+        if not directory:  # 用户取消
+            return
+        self._apply_save_dir(Path(directory))
+
+    def _apply_save_dir(self, target: Path) -> bool:
+        """可写探测 → 落盘 → 内存/Store 同步 → 通知；任一步失败不生效。
+
+        :return: True=已生效
+        """
+        try:
+            ensure_user_dir(target)  # 同目录临时文件试写（🔴 非系统临时目录）
+        except OSError as exc:
+            logger.warning("所选保存路径不可写：{}（{}）", target, exc)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_SAVE_DIR_INVALID.format(exc), key="save-dir-invalid"
+            )
+            return False
+        try:
+            set_user_config_value("recordings_dir", str(target))
+        except Exception as exc:
+            logger.error("保存路径配置写入失败：{}", exc)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_SAVE_DIR_PERSIST_FAILED.format(exc),
+                key="save-dir-persist-failed",
+            )
+            return False
+        self._settings.recordings_dir = target
+        self._store.set_directory(target)
+        logger.info("录音保存路径已更新并持久化：{}", target)
+        self._notifier.notify(
+            APP_DISPLAY_NAME, MSG_SAVE_DIR_UPDATED.format(target), key="save-dir-updated"
+        )
+        return True
+
+    def _on_open_dir(self) -> None:
+        """托盘「打开保存文件夹」：目录不存在先创建，再经桌面服务打开。"""
+        from PySide6.QtCore import QUrl  # 局部 import：仅此处需要
+        from PySide6.QtGui import QDesktopServices
+
+        directory = self._settings.recordings_dir
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.error("保存文件夹打开失败：{}（{}）", directory, exc)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_SAVE_DIR_OPEN_FAILED.format(exc), key="save-dir-open"
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+
     def _request_probe(self) -> None:
         """向网络 worker 线程投递一次 health 探测（start/重试/轮询三处共用）。
 
@@ -345,11 +456,26 @@ class ClientApp(QObject):
             self._set_tray(TrayStatus.RECORDING)
         elif event in (Event.HOTKEY_RELEASE, Event.RECORD_MAX_REACHED):
             pcm = self._recorder.stop()
+            # 先存 wav 后发识别：wav 是用户原始音频，识别失败时仍应保留；
+            # 保存失败仅告警不阻断主流程（🔴 落盘不得影响识别-粘贴链路）
+            self._current_wav_path = None
+            if self._settings.save_recordings:
+                try:
+                    self._current_wav_path = self._store.save_wav(pcm)
+                    logger.info("录音已保存：{}", self._current_wav_path)
+                except OSError as exc:
+                    logger.error("录音保存失败：{}", exc)
+                    self._notifier.notify(
+                        APP_DISPLAY_NAME, MSG_SAVE_WAV_FAILED.format(exc), key="save-wav"
+                    )
             self._set_tray(TrayStatus.TRANSCRIBING)
             self.sig_recognize_request.emit(pcm)
         elif to is State.COMPLETED:
             self._handle_output(payload)
         elif to is State.ERROR:
+            # 识别/输出失败：wav 保留、不写 txt，仅清空关联（txt 缺失即
+            # 识别失败的可观测信号）
+            self._current_wav_path = None
             self._notifier.notify(APP_DISPLAY_NAME, str(payload), key="transient-error")
             self._sm.fire(Event.ERROR_DONE)
         elif to is State.IDLE:
@@ -357,6 +483,17 @@ class ClientApp(QObject):
 
     def _handle_output(self, payload) -> None:
         text = (payload or {}).get("text", "")
+        # 识别成功即落盘 txt（与 wav 同基名）；保存失败仅告警，不回滚已有 wav
+        if self._current_wav_path is not None and self._settings.save_recordings:
+            try:
+                txt_path = self._store.save_txt(self._current_wav_path, text)
+                logger.info("识别文本已保存：{}", txt_path)
+            except OSError as exc:
+                logger.error("识别文本保存失败：{}", exc)
+                self._notifier.notify(
+                    APP_DISPLAY_NAME, MSG_SAVE_TXT_FAILED.format(exc), key="save-txt"
+                )
+        self._current_wav_path = None
         try:
             self._pipeline.output(text)
         except (ClipboardError, PasteError) as exc:

@@ -14,9 +14,14 @@ hotkey 表达式合法性、延迟/上限数值范围在 ``validate_startup`` �
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
-from zen_vocotype_protocol.paths import DEFAULT_LOG_DIR, DEFAULT_SOCKET_PATH
+from zen_vocotype_protocol.paths import (
+    DEFAULT_LOG_DIR,
+    DEFAULT_SOCKET_PATH,
+    ensure_user_dir,
+    get_recordings_dir,
+)
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
 
 #: 组件根目录（基于本文件自身位置解析；打包形态限制见 component_root 文档）
@@ -74,14 +79,41 @@ class Settings(ComponentSettings):
     #: （AppImage 只读挂载点写入必失败，阶段 4 T4.1 整改）
     log_dir: Path = DEFAULT_LOG_DIR
 
+    #: 录音/识别文本落盘总开关（T34）：开启后每次录音保存 WAV +
+    #: 识别完成保存同基名 TXT；托盘菜单「保存录音」勾选项实时切换并持久化
+    save_recordings: bool = True
+
+    #: 录音保存目录。默认 XDG data 下 zen_vocotype/recordings
+    #: （契约库 ``paths.get_recordings_dir`` 唯一出处）；
+    #: 🔴 必须绝对路径（对齐「路径类配置写绝对路径」红线）
+    recordings_dir: Path = Field(default_factory=get_recordings_dir)
+
+    @field_validator("recordings_dir")
+    @classmethod
+    def _recordings_dir_must_be_absolute(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError(f"recordings_dir 必须为绝对路径：{value}")
+        return value
+
 
 def validate_startup(settings: Settings) -> None:
     """启动期配置校验：任何非法配置在此显式失败（🔴 禁止运行期才暴露）。
 
-    :raises ValueError: hotkey 表达式无法被 pynput 解析时
+    :raises ValueError: hotkey 表达式无法被 pynput 解析，或录音保存开启但
+        目录不可创建/不可写时
     """
     # pynput 组合键表达式解析试跑（Hotkey 解析逻辑单一出处在 hotkey 模块，
     # 此处仅复用其解析器避免两处漂移——但 hotkey 模块属客户端内部，允许 import）
     from .hotkey.combo import parse_hotkey  # 延迟 import：配置层不反向依赖热键后端
 
     parse_hotkey(settings.hotkey)  # 非法表达式抛 ValueError，由入口转化非零退出
+
+    # 录音保存开启时探测目录可创建且可写（同目录临时文件试写，🔴 非系统临时目录）；
+    # 失败抛 ValueError 由入口转化退出码 2——🔴 禁止默认目录不可写仍静默启动
+    if settings.save_recordings:
+        try:
+            ensure_user_dir(settings.recordings_dir)
+        except OSError as exc:
+            raise ValueError(
+                f"录音保存目录不可创建或不可写：{settings.recordings_dir}（{exc}）"
+            ) from exc

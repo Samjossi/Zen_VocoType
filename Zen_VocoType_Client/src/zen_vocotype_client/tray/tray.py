@@ -4,6 +4,8 @@
 
 - 首行版本项（禁用态展示）：``Zen_VocoType v<版本>``——与旧 GridChat 托盘明确区分
 - 状态行（禁用态展示）：当前服务/状态机状态文本
+- 快捷键展示行（禁用态展示）+ 修改快捷键…（捕获对话框热切换，T3.3）
+- 录音保存功能组（T34）：保存录音（勾选项）/ 选择保存路径… / 打开保存文件夹
 - 手动重试连接（服务端断连时用户主动触发，选型二：禁止后台无限重试）
 - 退出
 
@@ -71,6 +73,12 @@ class ClientTray(QObject):
     retry_requested = Signal()
     #: 用户点击「修改快捷键…」（装配层弹捕获对话框 + 热切换）
     hotkey_change_requested = Signal()
+    #: 用户切换「保存录音」勾选项（装配层持久化 + 内存同步）
+    save_toggled = Signal(bool)
+    #: 用户点击「选择保存路径…」（装配层弹目录对话框 + 持久化）
+    choose_dir_requested = Signal()
+    #: 用户点击「打开保存文件夹」（装配层打开当前保存目录）
+    open_dir_requested = Signal()
     #: 用户点击「退出」
     quit_requested = Signal()
 
@@ -100,6 +108,18 @@ class ClientTray(QObject):
 
         self._hotkey_change_action = self._menu.addAction("修改快捷键…")
         self._hotkey_change_action.triggered.connect(self.hotkey_change_requested)
+        self._menu.addSeparator()
+
+        # 录音保存功能组（T34）：勾选项初始态由装配层 set_save_checked 注入
+        self._save_action = self._menu.addAction("保存录音")
+        self._save_action.setCheckable(True)
+        self._save_action.toggled.connect(self.save_toggled)
+        self._choose_dir_action = self._menu.addAction("选择保存路径…")
+        self._choose_dir_action.triggered.connect(self.choose_dir_requested)
+        self._open_dir_action = self._menu.addAction("打开保存文件夹")
+        self._open_dir_action.triggered.connect(self.open_dir_requested)
+        self._menu.addSeparator()
+
         self._retry_action = self._menu.addAction("重试连接服务端")
         self._retry_action.triggered.connect(self.retry_requested)
         self._quit_action = self._menu.addAction("退出")
@@ -127,6 +147,15 @@ class ClientTray(QObject):
     def set_hotkey_label(self, expression: str) -> None:
         """刷新热键展示行（pynput 表达式 → 人类可读；格式化单一出处在 combo 模块）。"""
         self._hotkey_action.setText(f"快捷键：{format_hotkey_display(expression)}")
+
+    def set_save_checked(self, checked: bool) -> None:
+        """设置「保存录音」勾选态（初始化/持久化失败回滚用）。
+
+        阻断信号：程序化改勾选不得触发 save_toggled 形成持久化回路。
+        """
+        self._save_action.blockSignals(True)
+        self._save_action.setChecked(checked)
+        self._save_action.blockSignals(False)
 
     def notify(self, title: str, message: str) -> None:
         """托盘通知（瞬时错误通道；去重由 notifier 负责，T2.7 接线）。"""
