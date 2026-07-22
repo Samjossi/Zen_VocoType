@@ -186,6 +186,36 @@ class TestRunInference:
         with pytest.raises(RuntimeError, match="返回结构非法"):
             run_inference(loaded, pcm_to_float_array(b"\x01\x00" * 160))
 
+    def test_funasr_branch_sensevoice_meta_tags_filtered(self):
+        """SenseVoice 原始元标签（语种/情感/事件/ITN）经官方后处理过滤。"""
+        entry = ModelEntry(model_id="iic/SenseVoiceSmall")
+        loaded = LoadedModel(
+            "fake",
+            entry,
+            _FakeFunASRModel(text="<|zh|><|NEUTRAL|><|Speech|><|woitn|>你好世界"),
+        )
+        outcome = run_inference(loaded, pcm_to_float_array(b"\x01\x00" * 160))
+        assert outcome["text"] == "你好世界"
+        assert "<|" not in outcome["text"]
+
+    def test_funasr_branch_emotion_event_to_emoji(self):
+        """情感/事件标签转 emoji（sensevoice 差异化能力的可见呈现）。"""
+        entry = ModelEntry(model_id="iic/SenseVoiceSmall")
+        loaded = LoadedModel(
+            "fake",
+            entry,
+            _FakeFunASRModel(text="<|zh|><|HAPPY|><|woitn|>太好了"),
+        )
+        outcome = run_inference(loaded, pcm_to_float_array(b"\x01\x00" * 160))
+        assert outcome["text"] == "太好了😊"
+
+    def test_funasr_branch_clean_text_untouched(self):
+        """干净文本（fun-asr-nano 等）不触发后处理，原样透传。"""
+        entry = ModelEntry(model_id="iic/X")
+        loaded = LoadedModel("fake", entry, _FakeFunASRModel(text="正常文本。"))
+        outcome = run_inference(loaded, pcm_to_float_array(b"\x01\x00" * 160))
+        assert outcome["text"] == "正常文本。"
+
     def test_qwen3_asr_branch_empty_result_raises(self):
         class _Empty:
             def transcribe(self, audio, **kwargs):

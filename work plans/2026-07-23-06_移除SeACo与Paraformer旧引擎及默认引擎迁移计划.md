@@ -151,8 +151,11 @@ qwen3-asr RTF≈1.2 在本就 60s 的预算下长音频已不可用；R1 的重�
 - fun-asr-nano 作为默认引擎进入真实使用观察期（≥2 周），关注长音频质量
   与特定口音表现；旧模型缓存（paraformer-large 家族 ~2.1GB、
   seaco-paraformer ~1GB）按回滚预案保留，观察期满后可清理。
-- sensevoice-small 识别文本含原始标签（`<|zh|><|NEUTRAL|>...`），
-  属该引擎既有行为（非本次引入），如需净化输出另立项。
+- ~~sensevoice-small 识别文本含原始标签（`<|zh|><|NEUTRAL|>...`）~~
+  ✅ 已于 2026-07-23 修复：`run_inference` 对含 `<|` 的文本应用 FunASR 官方
+  `rich_transcription_postprocess`——语种/ITN 标记剥除、情感/事件转 emoji
+  （差异化能力可见呈现）；干净文本不触发后处理零影响。新增 3 项单测 +
+  真机复核（sensevoice 输出已无标签前缀）。
 
 ---
 

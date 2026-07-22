@@ -138,7 +138,15 @@ def run_inference(loaded: LoadedModel, audio) -> dict:
     if not isinstance(result, list) or not result or "text" not in result[0]:
         raise RuntimeError(f"推理返回结构非法: {type(result).__name__}")
     item = result[0]
-    return {"text": item["text"], "confidence": item.get("confidence")}
+    text = item["text"]
+    if "<|" in text:
+        # SenseVoice 元标签（语种/情感/事件/ITN，如 <|zh|><|HAPPY|><|Speech|><|woitn|>）
+        # 官方后处理：剥除语种/ITN 标记，情感/事件转 emoji（该引擎的差异化能力）；
+        # 干净文本（paraformer/fun-asr-nano）不进入此分支，零影响
+        from funasr.utils.postprocess_utils import rich_transcription_postprocess
+
+        text = rich_transcription_postprocess(text)
+    return {"text": text, "confidence": item.get("confidence")}
 
 
 def selftest(loaded: LoadedModel) -> None:
