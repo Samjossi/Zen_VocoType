@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [tool.hatch.version]
-#: 版本号单一出处为 version.py 的 SERVICE_VERSION（🔴 两位数 major.minor 延续）
+#: 版本号单一出处为 version.py 的 SERVICE_VERSION（🔴 唯一真相为仓库根
+#: versions.toml，由 tools/sync_versions.py 同步，禁止手改）
 path = "src/zen_vocotype_service/version.py"
 pattern = "SERVICE_VERSION: str = \"(?P<version>[^\"]+)\""
 

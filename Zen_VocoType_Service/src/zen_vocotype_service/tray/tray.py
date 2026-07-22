@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import enum
-import sys
 import threading
 
 from loguru import logger
@@ -74,12 +73,6 @@ def status_icon(base: QIcon, status: TrayStatus, size: int = 64) -> QIcon:
     return QIcon(pixmap)
 
 
-def _build_version_text() -> str:
-    """构建版本展示文本，区分开发版/打包版（沿用参考代码思路）。"""
-    run_mode = "打包版" if getattr(sys, "frozen", False) else "开发版"
-    return f"版本: {SERVICE_VERSION}（{run_mode}）"
-
-
 def _truncate(text: str, max_len: int = _ERROR_DETAIL_MAX_LEN) -> str:
     """截断过长文本（菜单状态行展示用）。"""
     return text if len(text) <= max_len else text[: max_len - 1] + "…"
@@ -109,8 +102,6 @@ class ServiceTray(QObject):
             f"{APP_DISPLAY_NAME} v{SERVICE_VERSION}"
         )
         self._title_action.setEnabled(False)
-        self._version_action = self._menu.addAction(_build_version_text())
-        self._version_action.setEnabled(False)
         self._menu.addSeparator()
 
         # ② 状态行 / ③ 当前模型行（禁用态展示，轮询刷新）

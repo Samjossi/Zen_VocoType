@@ -74,12 +74,10 @@ class _FakeWorker:
 
 class TestTrayMenu:
     def test_version_actions_first_and_disabled(self, tray):
-        """版本项必须首两行且禁用（与客户端及旧 GridChat 托盘明确区分）。"""
+        """版本项必须首行且禁用（与客户端及旧 GridChat 托盘明确区分）。"""
         actions = tray.tray_icon.contextMenu().actions()
         assert actions[0].text() == f"{APP_DISPLAY_NAME} v{SERVICE_VERSION}"
         assert not actions[0].isEnabled()
-        assert actions[1].text() == f"版本: {SERVICE_VERSION}（开发版）"
-        assert not actions[1].isEnabled()
         assert "GridChat" not in actions[0].text()
 
     def test_version_is_two_part_format(self):

@@ -179,7 +179,7 @@ class TestFailureScenarios:
 
     def test_version_mismatch_explicit_error(self, qapp, tmp_path):
         """版本不一致：断开 + 明确报错（🔴 禁止静默继续）。"""
-        stub = StubServer(tmp_path / "stub.sock", protocol_version="9.9.9")
+        stub = StubServer(tmp_path / "stub.sock", protocol_version="9.9")
         stub.start()
         try:
             client = _make_app(stub.socket_path)

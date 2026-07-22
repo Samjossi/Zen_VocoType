@@ -1,6 +1,6 @@
 [project]
 name = "zen-vocotype-launcher"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Zen_VocoType 启动器：按序拉起服务端与客户端、就绪等待、单实例锁、失败清理"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,6 +10,12 @@ dependencies = [
     "pydantic-settings",
     "pyyaml",
 ]
+
+[tool.hatch.version]
+#: 版本号单一出处为 version.py 的 LAUNCHER_VERSION（🔴 唯一真相为仓库根
+#: versions.toml，由 tools/sync_versions.py 同步，禁止手改）
+path = "src/zen_vocotype_launcher/version.py"
+pattern = "LAUNCHER_VERSION: str = \"(?P<version>[^\"]+)\""
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zen_vocotype_launcher"]

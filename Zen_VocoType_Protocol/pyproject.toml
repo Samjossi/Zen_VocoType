@@ -1,6 +1,6 @@
 [project]
 name = "zen-vocotype-protocol"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Zen_VocoType 通信协议契约库：帧格式、action 常量、错误码、全局路径唯一出处"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,6 +9,12 @@ dependencies = []
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+#: 版本号单一出处为 version.py 的 PROTOCOL_VERSION（🔴 唯一真相为仓库根
+#: versions.toml，由 tools/sync_versions.py 同步，禁止手改）
+path = "src/zen_vocotype_protocol/version.py"
+pattern = "PROTOCOL_VERSION: str = \"(?P<version>[^\"]+)\""
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zen_vocotype_protocol"]

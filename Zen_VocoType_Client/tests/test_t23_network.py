@@ -82,7 +82,7 @@ class TestProtocolClient:
             stub.stop()
 
     def test_version_mismatch_by_header(self, tmp_path):
-        stub = StubServer(tmp_path / "s.sock", protocol_version="9.9.9")
+        stub = StubServer(tmp_path / "s.sock", protocol_version="9.9")
         stub.start()
         try:
             client = ProtocolClient(stub.socket_path)
@@ -148,7 +148,7 @@ class TestNetworkWorker:
         assert seen.status == [(STATUS_DISCONNECTED, "服务端未运行")]
 
     def test_probe_version_mismatch(self, tmp_path):
-        stub = StubServer(tmp_path / "s.sock", protocol_version="9.9.9")
+        stub = StubServer(tmp_path / "s.sock", protocol_version="9.9")
         stub.start()
         try:
             worker = NetworkWorker(stub.socket_path)

@@ -116,7 +116,7 @@ class TestProtocolErrors:
         assert resp["error"]["code"] == errors.ERR_ACTION_NOT_SUPPORTED
 
     def test_version_mismatch_1003(self, running_server):
-        header = _make_header("health", protocol_version="9.9.9")
+        header = _make_header("health", protocol_version="9.9")
         resp = _request(running_server[2], header)
         assert resp["ok"] is False
         assert resp["error"]["code"] == errors.ERR_PROTOCOL_VERSION_MISMATCH

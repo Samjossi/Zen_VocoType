@@ -1,0 +1,16 @@
+# Zen_VocoType 统一版本管理 —— 版本号唯一真相
+#
+# 规范：
+#   1. 版本号为两位数格式 major.minor（如 "1.0"），未来延续 1.1、1.2、2.0…
+#   2. 版本更新只改本文件，随后运行 tools/sync_versions.py 同步至各组件：
+#        .venv/bin/python tools/sync_versions.py
+#   3. 各组件一致性测试会比对本地出处与本文件，不同步即测试失败
+
+[meta]
+spec = "major.minor"
+
+[components]
+client   = "1.0"
+launcher = "1.0"
+protocol = "1.0"
+service  = "1.0"

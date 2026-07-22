@@ -33,7 +33,7 @@ headless 服务器 / `tray_enabled: false` / 托盘不可用时自动降级为�
 | 绿 | 就绪 |
 | 红 | 错误（状态行附原因） |
 
-**右键菜单**（自上而下）：
+**右键菜单**（自上而下；版本号唯一真相为仓库根 `versions.toml`，由 `tools/sync_versions.py` 同步）：
 
 ```
 Zen_VocoType_Service v1.0        ← 版本项（禁用）
