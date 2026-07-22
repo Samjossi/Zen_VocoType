@@ -37,6 +37,7 @@ MSG_VERSION_MISMATCH = "协议版本不兼容：{}——请更新客户端/服�
 MSG_MODEL_SWITCHING = "模型切换中，请稍候片刻再试"
 MSG_NOT_READY = "服务端正在加载模型，请稍候"
 MSG_MAX_RECORD = "已达最大录音时长，自动进入识别"
+MSG_LOADING_TIMEOUT = "服务端模型加载等待超时——请从托盘菜单「重试连接服务端」"
 
 
 def failure_message(code: int, message: str) -> str:
@@ -86,6 +87,14 @@ class ClientApp(QObject):
             enable_sound=settings.enable_sound_notify,
         )
         self._service_tray_status = TrayStatus.DISCONNECTED
+
+        # --- LOADING 态 health 轮询（服务端在线但模型未就绪 → 周期探测直至终态） ---
+        # 🔴 网络 I/O 仍只在 worker 线程：本定时器仅负责调度，探测经
+        # QMetaObject.invokeMethod(QueuedConnection) 投递；有次数上限（选型二红线）
+        self._loading_poll_timer = QTimer(self)
+        self._loading_poll_timer.setInterval(settings.loading_poll_interval_ms)
+        self._loading_poll_timer.timeout.connect(self._on_loading_poll_tick)
+        self._loading_poll_count = 0
 
         # --- 录音 ---
         self._recorder = Recorder(
@@ -140,7 +149,7 @@ class ClientApp(QObject):
         self._qthread = QThread()
         self._worker.moveToThread(self._qthread)
         self._qthread.start()
-        QMetaObject.invokeMethod(self._worker, "probe", Qt.ConnectionType.QueuedConnection)
+        self._request_probe()
 
         try:
             self._hotkey.start()
@@ -156,8 +165,10 @@ class ClientApp(QObject):
         return 0
 
     def shutdown(self) -> None:
-        """确定性退出序列：热键 → 录音 → 网络线程 → 托盘。"""
+        """确定性退出序列：轮询定时器 → 热键 → 录音 → 网络线程 → 托盘。"""
         logger.info("客户端退出序列开始")
+        # 先停轮询，防止退出序列中定时器触发向已停 worker 线程悬挂投递探针
+        self._loading_poll_timer.stop()
         self._hotkey.stop()
         self._recorder.close()
         self._stop_network_thread()
@@ -187,8 +198,27 @@ class ClientApp(QObject):
             self._sm.fire(Event.RECORD_MAX_REACHED)
 
     def _on_retry(self) -> None:
+        self._request_probe()
+
+    def _request_probe(self) -> None:
+        """向网络 worker 线程投递一次 health 探测（start/重试/轮询三处共用）。
+
+        🔴 红线：主线程禁止直接调 ``probe()``，必须 QueuedConnection 投递。
+        """
         if self._qthread is not None:
             QMetaObject.invokeMethod(self._worker, "probe", Qt.ConnectionType.QueuedConnection)
+
+    def _on_loading_poll_tick(self) -> None:
+        """LOADING 态轮询 tick：达上限停止并一次性通知，否则投递探测。"""
+        self._loading_poll_count += 1
+        if self._loading_poll_count > self._settings.loading_poll_max_count:
+            self._loading_poll_timer.stop()
+            self._loading_poll_count = 0
+            logger.warning("服务端模型加载轮询达上限，停止轮询并提示手动重试")
+            self._set_tray(TrayStatus.CONNECTING, "模型加载超时")
+            self._notifier.notify(APP_DISPLAY_NAME, MSG_LOADING_TIMEOUT, key="loading-timeout")
+            return
+        self._request_probe()
 
     # ------------------------------------------------------------------ 状态机转移监听（主线程）
 
@@ -230,6 +260,16 @@ class ClientApp(QObject):
             worker_mod.STATUS_ERROR: TrayStatus.ERROR,
         }
         self._service_tray_status = mapping.get(status, TrayStatus.DISCONNECTED)
+        if status == worker_mod.STATUS_LOADING:
+            # 仅在「新进入」LOADING 时复位计数并启动轮询；轮询探测返回的
+            # LOADING 不复位——否则上限检测被每次响应清零而永不触发
+            if not self._loading_poll_timer.isActive():
+                self._loading_poll_count = 0
+                self._loading_poll_timer.start()
+        else:
+            # 终态（READY/ERROR/DISCONNECTED）收敛：停止轮询
+            self._loading_poll_timer.stop()
+            self._loading_poll_count = 0
         if status == worker_mod.STATUS_DISCONNECTED and detail == "服务端未运行":
             # 持续状态走图标色；首次探针失败同时给一次瞬时提示（C1）
             self._notifier.notify(APP_DISPLAY_NAME, MSG_SERVER_ABSENT, key="server-absent")

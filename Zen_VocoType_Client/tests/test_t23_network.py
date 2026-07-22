@@ -121,6 +121,15 @@ class TestNetworkWorker:
         worker.probe()
         assert seen.status == [(STATUS_READY, "stub-model")]
 
+    def test_probe_reuses_healthy_connection(self, stub):
+        """已连接时 probe 复用长连接发 health，不产生无谓 close/connect 重建。"""
+        worker = NetworkWorker(stub.socket_path)
+        seen = Collector(worker)
+        worker.probe()
+        worker.probe()
+        assert seen.status == [(STATUS_READY, "stub-model")] * 2
+        assert stub.connection_count == 1  # 第二次 probe 未新建连接
+
     def test_probe_loading(self, tmp_path):
         stub = StubServer(tmp_path / "s.sock", health_status="starting")
         stub.start()

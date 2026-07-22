@@ -51,9 +51,14 @@ class NetworkWorker(QObject):
 
     @Slot()
     def probe(self) -> None:
-        """health 探测（启动时与托盘「重试连接」共用入口）。"""
+        """health 探测（启动时/托盘「重试连接」/LOADING 轮询共用入口）。
+
+        连接健康时直接复用长连接发 health，不重建——轮询期间若识别长连接
+        健康存在，反复 close/connect 属无谓重建（``connect()`` 会先 close 旧连接）。
+        """
         try:
-            self._client.connect()
+            if not self._client.connected:
+                self._client.connect()
             payload = self._client.health()
         except VersionMismatchError as exc:
             logger.error("协议版本不兼容：{}", exc)

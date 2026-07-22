@@ -24,3 +24,11 @@ paste_restore_delay_ms: 500
 
 # 声音辅助提示开关（默认关闭）
 # enable_sound_notify: false
+
+# 服务端模型加载中（托盘橙灯「连接中…」）的 health 轮询间隔（毫秒，默认 3000）：
+# 客户端按此间隔自动探测，模型就绪后托盘自动转绿
+# loading_poll_interval_ms: 3000
+
+# 加载中轮询最大次数（默认 120 次 × 3s ≈ 6 分钟，覆盖大模型冷启动）：
+# 达上限停止轮询并通知，需从托盘菜单「重试连接服务端」手动重试
+# loading_poll_max_count: 120

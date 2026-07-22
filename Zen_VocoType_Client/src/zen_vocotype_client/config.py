@@ -57,6 +57,14 @@ class Settings(ComponentSettings):
     #: 声音辅助提示开关（选型九可选通道，默认关闭）
     enable_sound_notify: bool = False
 
+    #: 服务端模型加载中（LOADING 态）的 health 轮询间隔（毫秒）。
+    #: 依据：本地 Socket 往返毫秒级，3s 间隔对服务端无压力且用户可感知的等待可接受
+    loading_poll_interval_ms: int = Field(default=3000, ge=500)
+
+    #: LOADING 态轮询最大次数（默认 120 次 × 3s ≈ 6 分钟，覆盖大模型冷启动加载）。
+    #: 达上限停止轮询并提示手动重试——落实「禁止后台无限重试」红线（选型二）
+    loading_poll_max_count: int = Field(default=120, ge=1)
+
     log_dir: Path = COMPONENT_ROOT / "logs"
 
 
