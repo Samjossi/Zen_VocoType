@@ -40,13 +40,11 @@ class TestDescriptionField:
         for name, entry in settings.models.items():
             assert entry.description, f"内置条目 {name} 缺描述"
 
-    def test_builtin_registry_has_five_models(self):
-        """内置注册表定稿五条：通用 / 多语言 / 热词 + 新一代增量两款。"""
+    def test_builtin_registry_has_three_models(self):
+        """内置注册表定稿三条：通用默认 / 多语言情感 / 高精度实验性。"""
         assert set(Settings().models) == {
-            "paraformer-large",
-            "sensevoice-small",
-            "seaco-paraformer",
             "fun-asr-nano",
+            "sensevoice-small",
             "qwen3-asr-1.7b",
         }
 
@@ -70,14 +68,14 @@ class TestCacheStatus:
 class TestBuildModelsHtml:
     def test_lists_all_registry_models(self):
         settings = Settings()
-        html = build_models_html(settings, "paraformer-large")
+        html = build_models_html(settings, "fun-asr-nano")
         assert f"共 <b>{len(settings.models)}</b> 个可切换模型" in html
         for name in settings.models:
             assert name in html
 
     def test_marks_current_model(self):
-        html = build_models_html(Settings(), "paraformer-large")
-        assert "paraformer-large" in html and "✅ 当前" in html
+        html = build_models_html(Settings(), "fun-asr-nano")
+        assert "fun-asr-nano" in html and "✅ 当前" in html
         assert "已加载（当前模型）" in html
         assert "未加载" in html  # 非当前模型行
 
@@ -116,11 +114,11 @@ class TestBuildModelsHtml:
 
 class TestDialog:
     def test_constructs_with_content(self, qapp):
-        dialog = create_models_dialog(Settings(), "paraformer-large")
+        dialog = create_models_dialog(Settings(), "fun-asr-nano")
         assert dialog.windowTitle() == "模型清单"
         browser = dialog.findChild(QTextBrowser)
         assert browser is not None
-        assert "paraformer-large" in browser.toHtml()
+        assert "fun-asr-nano" in browser.toHtml()
         dialog.close()
         dialog.deleteLater()
 

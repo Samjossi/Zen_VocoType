@@ -109,14 +109,14 @@ class TestStatusMapping:
         assert "加载中" in tray.tray_icon.toolTip()
 
     def test_ready_shows_model_and_checkmark(self, tray, ctx):
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         ctx.worker = _FakeWorker()
         tray._refresh()
         assert "状态：就绪" in _menu_texts(tray)
-        assert "当前模型：paraformer-large" in _menu_texts(tray)
+        assert "当前模型：fun-asr-nano" in _menu_texts(tray)
         assert "就绪" in tray.tray_icon.toolTip()
         submenu_texts = {a.text() for a in tray._switch_menu.actions()}
-        assert "✓ paraformer-large" in submenu_texts
+        assert "✓ fun-asr-nano" in submenu_texts
         assert "sensevoice-small" in submenu_texts
 
     def test_error_shows_truncated_detail(self, tray, ctx):
@@ -129,7 +129,7 @@ class TestStatusMapping:
         assert "错误" in tray.tray_icon.toolTip()
 
     def test_switching_shows_switching_label(self, tray, ctx):
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         ctx.worker = _FakeWorker(switching=True)
         tray._refresh()
         assert "状态：切换中…" in _menu_texts(tray)
@@ -140,7 +140,7 @@ class TestSwitchAvailability:
         return tray._switch_menu
 
     def test_disabled_when_worker_none(self, tray, ctx):
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         ctx.worker = None
         tray._refresh()
         assert not self._switch_menu(tray).isEnabled()
@@ -151,20 +151,20 @@ class TestSwitchAvailability:
         assert not self._switch_menu(tray).isEnabled()
 
     def test_disabled_when_switching(self, tray, ctx):
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         ctx.worker = _FakeWorker(switching=True)
         tray._refresh()
         assert not self._switch_menu(tray).isEnabled()
 
     def test_enabled_when_ready(self, tray, ctx):
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         ctx.worker = _FakeWorker()
         tray._refresh()
         assert self._switch_menu(tray).isEnabled()
 
     def test_click_triggers_submit_switch_off_main_thread(self, tray, ctx):
         """点击子菜单项 → submit_switch 被调用且在非 Qt 主线程执行。"""
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         worker = _FakeWorker()
         ctx.worker = worker
         tray._refresh()
@@ -182,7 +182,7 @@ class TestSwitchAvailability:
 
     def test_click_ignored_while_switching(self, tray, ctx):
         """切换进行中点击被守卫拦截，不重复提交（竞态窗口修复固化）。"""
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         worker = _FakeWorker(switching=True)
         ctx.worker = worker
         tray._on_switch_model("sensevoice-small")

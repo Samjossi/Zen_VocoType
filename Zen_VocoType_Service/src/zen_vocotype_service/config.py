@@ -7,8 +7,8 @@
 - 配置源优先级与组件根推算的**行为逻辑单一出处**为契约库
   ``zen_vocotype_protocol.settings``，本文件仅声明字段与默认值
 - Socket 路径默认值唯一出处为契约库 ``zen_vocotype_protocol.paths``，此处仅允许覆盖
-- 模型注册表内嵌于本配置（选型二），缺省内置 paraformer-large、sensevoice-small
-  与 seaco-paraformer 三条
+- 模型注册表内嵌于本配置（选型二），缺省内置 fun-asr-nano（默认）、
+  sensevoice-small 与 qwen3-asr-1.7b 三条
 """
 
 from pathlib import Path
@@ -30,8 +30,10 @@ COMPONENT_ROOT: Path = component_root(__file__)
 CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 
 #: 推理超时预算默认值（秒）。依据：协议 ``MAX_BODY_BYTES`` 约合 10 分钟录音，
-#: CPU 推理耗时实测标定见阶段 1 验收记录（T1.6），当前值为其安全上界
-DEFAULT_INFER_TIMEOUT_S: float = 60.0
+#: 默认引擎 fun-asr-nano 分钟级长音频实测 RTF≈0.27（2026-07-23，165.7s 音频
+#: 推理 45.2s），10 分钟录音推理 ≈164s，本值 = 164s × 安全系数 1.8 取整；
+#: 附带收益：模型切换共用本预算，首次切换未缓存大模型的下载时间亦被覆盖
+DEFAULT_INFER_TIMEOUT_S: float = 300.0
 
 #: 推理队列积压阈值（选型四）：超过即拒绝新请求返回 2002，防不可预期延迟
 DEFAULT_QUEUE_MAX_PENDING: int = 4
@@ -72,35 +74,23 @@ class ModelEntry(BaseModel):
 
 
 #: 内置默认注册表（用户可在 config.yaml 的 models 段覆盖/扩充）
+#: 2026-07-23 移除 paraformer-large/seaco-paraformer（评估记录：work plans/
+#: 2026-07-23-06_旧引擎移除评估记录.md），默认引擎同步迁至 fun-asr-nano
 DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
-    "paraformer-large": {
-        "model_id": "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+    "fun-asr-nano": {
+        "model_id": "FunAudioLLM/Fun-ASR-Nano-2512",
         "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-        "punc_model_id": "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-        "description": "通用中文离线识别（默认）。非自回归 Paraformer-large，"
-        "集成 VAD/标点/时间戳，支持数小时长音频，中文公开数据集 SOTA 级。",
+        "extra_params": {"trust_remote_code": True, "remote_code": "./model.py"},
+        "description": "通用离线识别（默认）。新一代 LLM-ASR（阿里通义 2025-12，0.8B），"
+        "SenseVoice 编码器 + Qwen3-0.6B 解码器，自带标点与时间戳，支持中/英/日"
+        "及中文七大方言、歌词说唱识别，难例与长尾词表现优于 Paraformer 代。"
+        "支持热词注入。CPU 实测 RTF≈0.27–0.34，日常可用。",
     },
     "sensevoice-small": {
         "model_id": "iic/SenseVoiceSmall",
         "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
         "description": "多语言语音理解：中/粤/英/日/韩等 50+ 语种，"
         "兼具情感识别与声音事件检测；推理极快（10 秒音频约 70ms）。",
-    },
-    "seaco-paraformer": {
-        "model_id": "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-        "punc_model_id": "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-        "description": "热词定制识别（ICASSP 2024）。SeACo-Paraformer 通过后验概率"
-        "融合激励热词，提升专有名词/术语的召回与准确率；不传热词时即通用中文识别。",
-    },
-    "fun-asr-nano": {
-        "model_id": "FunAudioLLM/Fun-ASR-Nano-2512",
-        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-        "extra_params": {"trust_remote_code": True, "remote_code": "./model.py"},
-        "description": "新一代通用识别大模型（阿里通义 2025-12，0.8B）。SenseVoice 编码器"
-        " + Qwen3-0.6B 解码器的端到端 LLM-ASR，自带标点与时间戳，支持中/英/日"
-        "及中文七大方言、歌词说唱识别，难例与长尾词表现优于 Paraformer 代。"
-        "支持热词注入。CPU 实测 RTF≈0.34，日常可用。",
     },
     "qwen3-asr-1.7b": {
         "model_id": "Qwen/Qwen3-ASR-1.7B",
@@ -122,7 +112,7 @@ class Settings(ComponentSettings):
     #: 模型根目录（MODELSCOPE_CACHE 指向）。默认 XDG 数据目录（契约库唯一出处），
     #: 🔴 禁止组件根目录内——AppImage 只读挂载点写入必失败（旧事故「随包模型死重」同款）
     models_dir: Path = DEFAULT_MODELS_DIR
-    default_model: str = "paraformer-large"
+    default_model: str = "fun-asr-nano"
     #: 日志目录。默认 XDG 状态目录（契约库唯一出处，理由同 models_dir）
     log_dir: Path = DEFAULT_LOG_DIR
 

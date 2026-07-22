@@ -15,10 +15,10 @@ from zen_vocotype_service.instance_lock import InstanceLock, InstanceLockError
 class TestSettings:
     def test_defaults_load(self):
         s = Settings()
-        assert s.default_model == "paraformer-large"
-        assert "paraformer-large" in s.models
+        assert s.default_model == "fun-asr-nano"
+        assert "fun-asr-nano" in s.models
         assert "sensevoice-small" in s.models
-        assert s.infer_timeout_s == 60.0
+        assert s.infer_timeout_s == 300.0
         assert s.queue_max_pending == 4
         assert s.max_connections == 8
 

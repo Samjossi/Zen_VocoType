@@ -40,11 +40,12 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 版本: 1.0（开发版/打包版）        ← 禁用
 ─────────────────────────────
 状态：就绪                        ← 禁用，轮询刷新
-当前模型：paraformer-large        ← 禁用，轮询刷新
+当前模型：fun-asr-nano           ← 禁用，轮询刷新
 ─────────────────────────────
 切换模型 ►                       ← 注册表逐键列出，当前模型前缀 ✓
-   ├── ✓ paraformer-large           （非就绪 / 切换中 / 仅 1 模型时禁用）
-   └── sensevoice-small
+   ├── ✓ fun-asr-nano              （非就绪 / 切换中 / 仅 1 模型时禁用）
+   ├── sensevoice-small
+   └── qwen3-asr-1.7b
 ─────────────────────────────
 打开日志目录                      ← 打开 log_dir
 退出服务                          ← 与 SIGTERM 同一退出序列
@@ -69,10 +70,10 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 | --- | --- | --- |
 | `socket_path` | 契约库 `paths.DEFAULT_SOCKET_PATH`（`$XDG_RUNTIME_DIR/zen_vocotype.sock`） | 仅允许覆盖，默认值勿照抄 |
 | `models_dir` | 契约库 `paths.DEFAULT_MODELS_DIR`（`$XDG_DATA_HOME/zen_vocotype/models`，回退 `~/.local/share/...`） | MODELSCOPE_CACHE 指向（入口第一行硬设置，顺序敏感）；🔴 默认不落组件根（AppImage 只读挂载写失败，阶段 4 T4.1） |
-| `default_model` | `paraformer-large` | 必须存在于注册表，否则启动报错退出 |
+| `default_model` | `fun-asr-nano` | 必须存在于注册表，否则启动报错退出 |
 | `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | loguru 轮转（10MB × 5）；三组件共享目录、文件名区分 |
-| `models` | 内置五条（见下） | 模型注册表（config.yaml 内嵌） |
-| `infer_timeout_s` | 60 | 推理超时预算（依据见验收记录实测） |
+| `models` | 内置三条（见下） | 模型注册表（config.yaml 内嵌） |
+| `infer_timeout_s` | 300 | 推理超时预算（按默认引擎 fun-asr-nano 分钟级长音频实测 RTF≈0.27 标定） |
 | `queue_max_pending` | 4 | 推理队列积压阈值，超过拒绝新请求 |
 | `max_connections` | 8 | 连接数上限（防御性） |
 | `tray_enabled` | true | false 强制纯控制台模式（headless 自动降级见「系统托盘」） |
@@ -82,17 +83,17 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 
 ```yaml
 models:
-  paraformer-large:
-    model_id: iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+  fun-asr-nano:
+    model_id: FunAudioLLM/Fun-ASR-Nano-2512
     vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
-    punc_model_id: iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch
+    extra_params: {trust_remote_code: true, remote_code: ./model.py}
   sensevoice-small:
     model_id: iic/SenseVoiceSmall
     vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
   # 本地直载条目示例（model_id 与 local_path 二选一）：
   # my-local-model:
   #   local_path: /绝对路径/到/模型目录
-default_model: paraformer-large
+default_model: fun-asr-nano
 ```
 
 - `model_id`（缓存命中/在线下载）与 `local_path`（本地直载）每条目二选一
@@ -106,10 +107,8 @@ default_model: paraformer-large
 
 | 注册名 | 引擎 | 定位 | CPU 实测 RTF |
 | --- | --- | --- | --- |
-| `paraformer-large` | funasr | 通用中文离线识别（默认） | 快（非自回归） |
+| `fun-asr-nano` | funasr | 通用离线识别（默认）：自带标点/热词/方言的新一代 LLM-ASR | ≈0.27–0.34 |
 | `sensevoice-small` | funasr | 多语言 + 情感/事件识别 | 极快 |
-| `seaco-paraformer` | funasr | 热词定制识别 | 快 |
-| `fun-asr-nano` | funasr | 新一代 LLM-ASR 通用识别（自带标点，支持热词/方言） | ≈0.34 |
 | `qwen3-asr-1.7b` | qwen3-asr | 高精度多语言/方言 SOTA（⚠️ 慢于实时，短音频/实验性） | ≈1.2 |
 
 - 模型缓存布局即 modelscope 现行布局（`models/models/iic--<名>/snapshots/master`），

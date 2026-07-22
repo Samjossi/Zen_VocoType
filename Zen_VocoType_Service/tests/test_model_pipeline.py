@@ -28,9 +28,9 @@ def settings() -> Settings:
 
 
 class TestRegistryLoad:
-    def test_paraformer_load_and_selftest(self, settings):
-        entry = get_entry(settings, "paraformer-large")
-        loaded = load_model("paraformer-large", entry)
+    def test_fun_asr_nano_load_and_selftest(self, settings):
+        entry = get_entry(settings, "fun-asr-nano")
+        loaded = load_model("fun-asr-nano", entry)
         try:
             selftest(loaded)  # 不抛异常即通过
         finally:
@@ -45,7 +45,7 @@ class TestRegistryLoad:
             loaded.release()
 
     def test_load_failure_has_real_reason(self, settings):
-        bad_entry = settings.models["paraformer-large"].model_copy(
+        bad_entry = settings.models["fun-asr-nano"].model_copy(
             update={"local_path": Path("/nonexistent/model"), "model_id": None}
         )
         with pytest.raises(ModelLoadError, match="加载失败"):
@@ -55,26 +55,26 @@ class TestRegistryLoad:
 class TestAtomicSwitch:
     def test_switch_cross_verify_and_rollback(self, settings):
         manager = ModelManager(settings)
-        manager.load_initial("paraformer-large")
+        manager.load_initial("fun-asr-nano")
         try:
-            assert manager.model_info()["current_model"] == "paraformer-large"
+            assert manager.model_info()["current_model"] == "fun-asr-nano"
 
             # 目标不在注册表 → ModelNotRegisteredError，当前模型不变
             with pytest.raises(ModelNotRegisteredError):
                 manager.switch("no-such-model")
-            assert manager.current.name == "paraformer-large"
+            assert manager.current.name == "fun-asr-nano"
 
             # 真实切换到 sensevoice-small，model_info 交叉验证
             manager.switch("sensevoice-small")
             info = manager.model_info()
             assert info["current_model"] == "sensevoice-small"
             loaded_flags = {m["name"]: m["loaded"] for m in info["available_models"]}
-            assert loaded_flags["paraformer-large"] is False
+            assert loaded_flags["fun-asr-nano"] is False
             assert loaded_flags["sensevoice-small"] is True
 
             # 加载失败回滚：注入坏条目，旧模型不受影响
             settings.models["broken"] = settings.models[
-                "paraformer-large"
+                "fun-asr-nano"
             ].model_copy(
                 update={"local_path": Path("/nonexistent/model"), "model_id": None}
             )
@@ -85,8 +85,8 @@ class TestAtomicSwitch:
             finally:
                 del settings.models["broken"]
 
-            # 切回 paraformer-large
-            manager.switch("paraformer-large")
-            assert manager.model_info()["current_model"] == "paraformer-large"
+            # 切回 fun-asr-nano
+            manager.switch("fun-asr-nano")
+            assert manager.model_info()["current_model"] == "fun-asr-nano"
         finally:
             manager.release()

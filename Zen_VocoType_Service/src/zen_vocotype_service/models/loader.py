@@ -20,8 +20,9 @@ from zen_vocotype_protocol.paths import DEFAULT_SAMPLE_RATE
 from zen_vocotype_service.config import COMPONENT_ROOT, ModelEntry
 from zen_vocotype_service.logging_setup import logger
 
-#: 自检音频资产（真实语音片段，来源：paraformer-large 模型仓库示例
-#: asr_example.wav 转 16kHz/16bit/单声道 PCM 并截取前 3 秒）。
+#: 自检音频资产（真实语音片段，来源：历史默认引擎 paraformer-large 模型仓库
+#: 示例 asr_example.wav 转 16kHz/16bit/单声道 PCM 并截取前 3 秒；资产已
+#: vendor 进本仓库，与任何引擎的存续无关）。
 #: 双环境解析（与 tray/icon_loader 同一 ``_MEIPASS`` 约定，阶段 4 T4.2 修：
 #: 原 ``COMPONENT_ROOT / "assets"`` 在打包形态指向产物根而非 ``_internal``）；
 #: 延迟为函数调用而非模块常量——``_MEIPASS`` 须在运行期读取

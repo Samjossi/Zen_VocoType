@@ -8,9 +8,10 @@
 # socket_path: /自定义/绝对路径/zen_vocotype.sock  # 取消注释以覆盖契约库默认值
 
 # 默认加载模型（须存在于模型注册表）
-default_model: paraformer-large
+default_model: fun-asr-nano
 
-# 模型注册表（缺省内置 paraformer-large 与 sensevoice-small 两条，此处仅演示写法；
+# 模型注册表（缺省内置 fun-asr-nano、sensevoice-small 与 qwen3-asr-1.7b 三条，
+# 此处仅演示写法；
 # 🔴 内置默认值勿照抄——照抄会使代码默认值演进时本文件静默滞留旧值。
 # 仅在需要新增/修改条目时配置）：
 # models:
@@ -19,4 +20,5 @@ default_model: paraformer-large
 #   my-online-model:
 #     model_id: iic/SenseVoiceSmall      # modelscope 缓存命中/在线下载
 #     vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch   # 可选附属模型
-#     punc_model_id: iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch
+#     engine_type: funasr                # 可选，默认 funasr；qwen3-asr 走 Qwen3ASRModel
+#     extra_params: {}                   # 可选，引擎特定加载附加参数

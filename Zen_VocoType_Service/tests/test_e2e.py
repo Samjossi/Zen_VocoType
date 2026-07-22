@@ -7,7 +7,8 @@
 冷启动实测：进程启动 → Socket 可连接计时，连测 5 次（验收标准 1：≤5s）；
 同时记录到 ready 的模型加载耗时（阶段 3 Launcher 超时预算 P99 输入，落盘）。
 
-推理超时标定：60 秒 PCM（配置上限）实测 CPU 推理耗时，校验 60s 预算。
+推理超时标定：60 秒 PCM 实测 CPU 推理耗时，校验 300s 预算
+（2026-07-23 起按默认引擎 fun-asr-nano 标定，原 60s 预算为 paraformer-large 标定）。
 """
 
 import json
@@ -184,14 +185,14 @@ class TestEndToEnd:
         assert info["payload"]["current_model"] == "sensevoice-small"
         flags = {m["name"]: m["loaded"] for m in info["payload"]["available_models"]}
         assert flags["sensevoice-small"] is True
-        assert flags["paraformer-large"] is False
+        assert flags["fun-asr-nano"] is False
 
         resp = _rpc(
-            TEST_SOCKET, "model_switch", payload={"model_name": "paraformer-large"}
+            TEST_SOCKET, "model_switch", payload={"model_name": "fun-asr-nano"}
         )
         assert resp["ok"] is True
         info = _rpc(TEST_SOCKET, "model_info")
-        assert info["payload"]["current_model"] == "paraformer-large"
+        assert info["payload"]["current_model"] == "fun-asr-nano"
 
         _record(
             "e2e",
@@ -216,7 +217,7 @@ def _rpc_recognize_text() -> str:
 
 
 class TestInferTimeoutCalibration:
-    """60 秒 PCM（配置上限）实测 CPU 推理耗时，校验 60s 超时预算。"""
+    """60 秒 PCM 实测 CPU 推理耗时，校验 300s 超时预算（fun-asr-nano 标定）。"""
 
     def test_60s_audio_inference_within_budget(self, service):
         _wait_ready(TEST_SOCKET, READY_WAIT_BUDGET_S)
@@ -237,11 +238,11 @@ class TestInferTimeoutCalibration:
             {
                 "audio_s": 60,
                 "infer_s": round(infer_s, 3),
-                "timeout_budget_s": 60,
-                "within_budget": infer_s <= 60,
+                "timeout_budget_s": 300,
+                "within_budget": infer_s <= 300,
             },
         )
-        assert infer_s <= 60, f"60s 音频推理 {infer_s:.1f}s 超 60s 预算"
+        assert infer_s <= 300, f"60s 音频推理 {infer_s:.1f}s 超 300s 预算"
 
 
 def _record(section: str, data: dict) -> None:

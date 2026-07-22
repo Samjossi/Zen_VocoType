@@ -82,12 +82,12 @@ class TestHealthReady:
 
     def test_ready_true_after_mark_ready(self, running_server):
         _, ctx, sock_path = running_server
-        ctx.state.mark_ready("paraformer-large")
+        ctx.state.mark_ready("fun-asr-nano")
         resp = _request(sock_path, _make_header("ready"))
-        assert resp["payload"] == {"ready": True, "current_model": "paraformer-large"}
+        assert resp["payload"] == {"ready": True, "current_model": "fun-asr-nano"}
         resp = _request(sock_path, _make_header("health"))
         assert resp["payload"]["status"] == "ready"
-        assert resp["payload"]["current_model"] == "paraformer-large"
+        assert resp["payload"]["current_model"] == "fun-asr-nano"
 
     def test_ready_error_state_returns_3002(self, running_server):
         _, ctx, sock_path = running_server
