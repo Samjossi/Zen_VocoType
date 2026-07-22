@@ -38,6 +38,20 @@ from zen_vocotype_service.server import SocketServer, SocketPathError
 from zen_vocotype_service.state import ServiceState
 
 
+def _lock_path_for(settings: Settings) -> str:
+    """按 Socket 路径选择锁文件：dev Socket 用 dev 锁（dev/正式并行互不干扰，
+    阶段 3 验收标准 4；路径常量唯一出处为契约库 ``paths``）。"""
+    from zen_vocotype_protocol.paths import (
+        DEV_SERVICE_LOCK_PATH,
+        DEV_SOCKET_PATH,
+        SERVICE_LOCK_PATH,
+    )
+
+    if settings.socket_path == DEV_SOCKET_PATH:
+        return DEV_SERVICE_LOCK_PATH
+    return SERVICE_LOCK_PATH
+
+
 def _async_load_model(ctx: ServiceContext) -> None:
     """后台加载线程：加载默认模型 + 自检，推进状态 ready / error。"""
     settings = ctx.settings
@@ -122,7 +136,7 @@ def main() -> int:
     logger.info("Zen_VocoType_Service 启动中（pid={}）", os.getpid())
 
     try:
-        lock = InstanceLock()
+        lock = InstanceLock(_lock_path_for(settings))
         lock.acquire()
     except InstanceLockError as exc:
         logger.error("{}", exc)

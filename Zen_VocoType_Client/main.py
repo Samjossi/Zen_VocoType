@@ -6,7 +6,8 @@
 - ``python main.py --screenshot <目录>``  托盘布局截图自检（开发自查工具，
   见 ``tray/selftest.py``；🔴 仅开发用途）
 
-退出码：0 正常退出；2 配置校验失败；3 录音设备不可用；4 热键后端启动失败。
+退出码：0 正常退出；2 配置校验失败；3 录音设备不可用；4 热键后端启动失败；
+5 已有客户端实例运行（单实例锁冲突）。
 """
 
 import sys
@@ -42,6 +43,22 @@ def main() -> int:
 
         return run_screenshot_mode(output_dir)
 
+    # 单实例锁（阶段 3 T3.2）：正常启动路径抢锁；截图自检为开发工具不抢锁
+    from loguru import logger
+
+    from zen_vocotype_client.instance_lock import (
+        InstanceLock,
+        InstanceLockError,
+        lock_path_for,
+    )
+
+    lock = InstanceLock(lock_path_for(settings.socket_path))
+    try:
+        lock.acquire()
+    except InstanceLockError as exc:
+        logger.error("{}", exc)
+        return 5
+
     from PySide6.QtWidgets import QApplication
 
     from zen_vocotype_client.app import ClientApp
@@ -52,11 +69,15 @@ def main() -> int:
     code = client.start()
     if code != 0:
         client.shutdown()
+        lock.release()
         return code
     if client._tray is not None:
         client._tray.quit_requested.connect(app.quit)
     app.aboutToQuit.connect(client.shutdown)
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

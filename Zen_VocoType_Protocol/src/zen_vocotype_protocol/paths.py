@@ -41,6 +41,24 @@ DEV_SOCKET_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_dev.sock")
 #: Launcher（阶段 3）读本文件内 PID 发 SIGTERM 精确停服，路径只准引用本常量
 SERVICE_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_service.lock")
 
+#: 服务端 dev 模式单实例锁（与正式锁分离，阶段 3 验收标准 4「dev/正式互不干扰」前提：
+#: dev Socket 已由 DEV_SOCKET_PATH 隔离，锁文件若共用则两端仍无法并行）
+DEV_SERVICE_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_service_dev.lock")
+
+#: 客户端单实例锁文件路径（阶段 3 T3.2 补齐，与 SERVICE_LOCK_PATH 同约定）；
+#: Launcher 读本文件内 PID 做幂等识别（/proc/<pid>/exe 精确匹配）
+CLIENT_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_client.lock")
+
+#: 客户端 dev 模式单实例锁（与正式锁分离，理由同 DEV_SERVICE_LOCK_PATH）
+DEV_CLIENT_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_client_dev.lock")
+
+#: Launcher 自身单实例锁（flock + 元信息记录，阶段 3 选型三）；
+#: 持锁期间写入 JSON 元信息（pid/mode/started_at），供第二次执行读取并提示
+LAUNCHER_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_launcher.lock")
+
+#: Launcher dev 模式单实例锁（与正式锁分离，dev/正式编排互不阻塞）
+DEV_LAUNCHER_LOCK_PATH: str = str(DEFAULT_RUNTIME_DIR / "zen_vocotype_launcher_dev.lock")
+
 # ---------------------------------------------------------------------------
 # 音频格式约定（recognize 请求的默认 PCM 参数，与选型 3 一致）
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ dependencies = [
     "psutil",
     "pydantic-settings",
     "pyyaml",
+    "loguru",
 ]
 
 [tool.hatch.version]

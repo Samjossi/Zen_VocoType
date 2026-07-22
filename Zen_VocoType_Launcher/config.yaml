@@ -6,3 +6,13 @@
 
 # socket_path: /自定义/绝对路径/zen_vocotype.sock          # 取消注释以覆盖契约库默认值
 # dev_socket_path: /自定义/绝对路径/zen_vocotype_dev.sock  # --dev 模式覆盖项
+
+# 就绪等待与进程回收（默认值与依据见 src/zen_vocotype_launcher/config.py 字段注释）：
+# socket_wait_timeout_s: 15      # 阶段一：Socket 可连接等待上限（秒）
+# model_ready_timeout_s: 180     # 阶段二：模型就绪等待上限（秒）
+# ready_poll_interval_ms: 200    # ready 轮询间隔（毫秒）
+# terminate_grace_seconds: 5     # 进程组终止 SIGTERM→SIGKILL 宽限（秒）
+
+# 正式模式二进制显式路径（默认按邻接目录约定自动解析，一般无需配置）：
+# service_binary: /自定义/绝对路径/Zen_VocoType_Service.AppImage
+# client_binary: /自定义/绝对路径/Zen_VocoType_Client.AppImage

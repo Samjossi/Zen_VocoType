@@ -11,6 +11,8 @@
 
 from pathlib import Path
 
+from pydantic import Field
+
 from zen_vocotype_protocol.paths import DEFAULT_SOCKET_PATH, DEV_SOCKET_PATH
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
 
@@ -22,10 +24,36 @@ CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 
 
 class Settings(ComponentSettings):
-    """启动器全部配置项的唯一入口。"""
+    """启动器全部配置项的唯一入口。
+
+    数值型字段以 ``Field(gt=0)`` 启动校验——非法值在 ``Settings()`` 构造期
+    即抛 ``ValidationError``（🔴 禁止运行期才暴露配置错误）；入口捕获后
+    以退出码 5（配置/路径错误）终止。
+    """
 
     model_config = component_model_config(__file__, "ZEN_VOCOTYPE_LAUNCHER_")
 
     socket_path: str = DEFAULT_SOCKET_PATH
     dev_socket_path: str = DEV_SOCKET_PATH
     log_dir: Path = COMPONENT_ROOT / "logs"
+
+    #: 阶段一等待上限（秒）：Socket 可连接。
+    #: 依据：阶段 1 验收冷启动 Socket 可连 ≤5s 的 3 倍余量
+    socket_wait_timeout_s: float = Field(default=15.0, gt=0)
+
+    #: 阶段二等待上限（秒）：模型就绪（ready 接口确认）。
+    #: 依据：初值覆盖冷机模型加载上限，实施期以 P99 冷启动实测校准
+    #: 并回填 阶段3选型文档（选型二）
+    model_ready_timeout_s: float = Field(default=180.0, gt=0)
+
+    #: ready 轮询间隔（毫秒）。
+    #: 依据：就绪信号精度要求低，200ms 兼顾响应速度与 Socket 压力
+    ready_poll_interval_ms: int = Field(default=200, gt=0)
+
+    #: 进程组两段式终止的 SIGTERM→SIGKILL 宽限（秒）
+    terminate_grace_seconds: float = Field(default=5.0, gt=0)
+
+    #: 服务端/客户端二进制显式路径（正式模式）。
+    #: 默认 None = 按邻接目录约定自动解析（targets.py）；配置可显式覆盖
+    service_binary: str | None = None
+    client_binary: str | None = None
