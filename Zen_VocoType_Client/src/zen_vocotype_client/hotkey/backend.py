@@ -28,13 +28,17 @@ def _canonical_key(key) -> tuple:
       而物理按键事件传来 ``KeyCode(vk=32, char='o')``（带物理键码）——
       字符键须按 char 比较（忽略 vk），否则物理按键永不匹配
 
-    规则：char 非空按 char 匹配；char 为空（特殊键）按 vk 匹配。
+    规则：char 非空按 char 匹配（忽略 vk），否则物理按键永不匹配；
+    char 为空（特殊键）按 vk 匹配。char 统一小写比较：pynput X11 监听器
+    按 Shift 状态上报大写字符（Shift+a → char='A'），而
+    HotKey.parse("<ctrl>+<shift>+a") 主键为 char='a'——不统一大小写则
+    含 Shift 的字母组合永不触发（T3.3 评审修复）。
     """
     if isinstance(key, keyboard.Key):
         key = key.value  # Key 枚举 → 其 KeyCode 值
     char = getattr(key, "char", None)
     if char is not None:
-        return ("char", char)
+        return ("char", char.lower())
     return ("vk", getattr(key, "vk", None))
 
 

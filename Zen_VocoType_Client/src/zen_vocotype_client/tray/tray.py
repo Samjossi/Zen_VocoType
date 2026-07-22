@@ -21,6 +21,7 @@ from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import __version__
+from ..hotkey.combo import format_hotkey_display
 from .icon_loader import load_tray_icon
 
 #: 应用展示名（版本项与通知标题共用，单一出处）
@@ -68,6 +69,8 @@ class ClientTray(QObject):
 
     #: 用户点击「手动重试连接」（装配层接网络 worker）
     retry_requested = Signal()
+    #: 用户点击「修改快捷键…」（装配层弹捕获对话框 + 热切换）
+    hotkey_change_requested = Signal()
     #: 用户点击「退出」
     quit_requested = Signal()
 
@@ -89,8 +92,14 @@ class ClientTray(QObject):
         # 状态行（禁用态展示，持续状态的菜单状态页）
         self._status_action = self._menu.addAction("")
         self._status_action.setEnabled(False)
+
+        # 热键展示行（禁用态展示，热切换成功后经 set_hotkey_label 刷新）
+        self._hotkey_action = self._menu.addAction("快捷键：—")
+        self._hotkey_action.setEnabled(False)
         self._menu.addSeparator()
 
+        self._hotkey_change_action = self._menu.addAction("修改快捷键…")
+        self._hotkey_change_action.triggered.connect(self.hotkey_change_requested)
         self._retry_action = self._menu.addAction("重试连接服务端")
         self._retry_action.triggered.connect(self.retry_requested)
         self._quit_action = self._menu.addAction("退出")
@@ -114,6 +123,10 @@ class ClientTray(QObject):
         self._status_action.setText(text)
         self._tray.setToolTip(f"{APP_DISPLAY_NAME} — {status.label}")
         logger.debug("托盘状态更新：{} {}", status.name, detail)
+
+    def set_hotkey_label(self, expression: str) -> None:
+        """刷新热键展示行（pynput 表达式 → 人类可读；格式化单一出处在 combo 模块）。"""
+        self._hotkey_action.setText(f"快捷键：{format_hotkey_display(expression)}")
 
     def notify(self, title: str, message: str) -> None:
         """托盘通知（瞬时错误通道；去重由 notifier 负责，T2.7 接线）。"""

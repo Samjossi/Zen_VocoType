@@ -81,3 +81,62 @@ def parse_hotkey(expression: str) -> HotkeyCombo:
         key=normal_keys[0],
         expression=expression.strip(),
     )
+
+
+#: 修饰键展示顺序与显示名（固定序，与配置书写习惯一致）
+_MODIFIER_DISPLAY_ORDER: tuple[str, ...] = ("ctrl", "alt", "shift", "cmd")
+_MODIFIER_DISPLAY_NAMES: dict[str, str] = {
+    "ctrl": "Ctrl",
+    "alt": "Alt",
+    "shift": "Shift",
+    "cmd": "Cmd",
+}
+
+
+#: vk → 特殊键名反查表（HotKey.parse("<f9>") 产出 KeyCode(vk=…)，非 Key 枚举，
+#: 与 backend._canonical_key 实测结论一致——特殊键须按 vk 归位再取名）
+_VK_TO_KEY_NAME: dict[int, str] = {
+    member.value.vk: member.name
+    for member in keyboard.Key
+    if getattr(member.value, "vk", None) is not None
+}
+
+
+def _format_key_name(name: str) -> str:
+    """pynput 键名 → 展示写法（f1…f12 全大写；其余按下划线分段首字母大写，
+    page_up → Page_Up——str.capitalize 会小写其余字符，不可整串调用）。"""
+    if name.startswith("f") and name[1:].isdigit():
+        return name.upper()
+    return "_".join(part.capitalize() for part in name.split("_"))
+
+
+def _key_display_name(key: keyboard.Key | keyboard.KeyCode) -> str:
+    """主键 → 人类可读写法（字符大写；特殊键经 vk 反查键名）。"""
+    if isinstance(key, keyboard.Key):
+        return _format_key_name(key.name)
+    char = getattr(key, "char", None)
+    if char is not None:
+        return char.upper()
+    vk = getattr(key, "vk", None)
+    if vk is not None and vk in _VK_TO_KEY_NAME:
+        return _format_key_name(_VK_TO_KEY_NAME[vk])
+    return f"VK{vk}" if vk is not None else "?"
+
+
+def format_hotkey_display(expression: str) -> str:
+    """pynput 组合键表达式 → 人类可读展示文本（``<ctrl>+<alt>+o`` → ``Ctrl+Alt+O``）。
+
+    供托盘菜单展示行与捕获对话框回显共用（表达式知识单一出处在本模块，
+    🔴 禁止 UI 层另写解析）。非法表达式原样回显，不抛异常。
+    """
+    try:
+        combo = parse_hotkey(expression)
+    except ValueError:
+        return expression
+    parts = [
+        _MODIFIER_DISPLAY_NAMES[name]
+        for name in _MODIFIER_DISPLAY_ORDER
+        if name in combo.modifiers
+    ]
+    parts.append(_key_display_name(combo.key))
+    return "+".join(parts)

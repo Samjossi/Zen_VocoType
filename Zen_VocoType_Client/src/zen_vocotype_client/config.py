@@ -25,6 +25,11 @@ COMPONENT_ROOT: Path = component_root(__file__)
 #: 默认配置文件路径
 CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 
+#: hotkey 字段对应的环境变量名（env 前缀 + 字段名的推导结果，与上方
+#: component_model_config 声明共置一处；app.py 覆盖检测与提示文案共用此常量，
+#: 🔴 禁止在其他位置硬编码第二份）
+HOTKEY_ENV_VAR = "ZEN_VOCOTYPE_CLIENT_HOTKEY"
+
 
 class Settings(ComponentSettings):
     """客户端全部配置项的唯一入口。"""

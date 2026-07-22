@@ -15,11 +15,14 @@
 
 from __future__ import annotations
 
+import os
+
 from loguru import logger
 from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, Signal, QTimer
+from zen_vocotype_protocol.user_config import set_user_config_value
 
-from .config import Settings
-from .hotkey.combo import parse_hotkey
+from .config import HOTKEY_ENV_VAR, Settings
+from .hotkey.combo import format_hotkey_display, parse_hotkey
 from .hotkey.pynput_backend import PynputBackend
 from .output.clipboard import ClipboardError, create_clipboard
 from .output.paster import PasteError, create_paster
@@ -28,6 +31,7 @@ from .recorder.recorder import DeviceUnavailableError, Recorder
 from .state_machine import Event, State, StateMachine
 from .transcribe import worker as worker_mod
 from .transcribe.worker import NetworkWorker
+from .tray.hotkey_dialog import HotkeyCaptureDialog
 from .tray.notifier import Notifier
 from .tray.tray import APP_DISPLAY_NAME, ClientTray, TrayStatus
 
@@ -38,6 +42,12 @@ MSG_MODEL_SWITCHING = "模型切换中，请稍候片刻再试"
 MSG_NOT_READY = "服务端正在加载模型，请稍候"
 MSG_MAX_RECORD = "已达最大录音时长，自动进入识别"
 MSG_LOADING_TIMEOUT = "服务端模型加载等待超时——请从托盘菜单「重试连接服务端」"
+MSG_HOTKEY_BUSY = "录音/识别进行中，请结束后再修改快捷键"
+MSG_HOTKEY_UPDATED = "快捷键已更新为 {}"
+MSG_HOTKEY_INVALID = "快捷键表达式非法：{}"
+MSG_HOTKEY_PERSIST_FAILED = "快捷键配置写入失败：{}——本次修改未生效"
+MSG_HOTKEY_SWITCH_FAILED = "热键监听失效，请重启客户端（{}）"
+MSG_HOTKEY_ENV_OVERRIDE = f"检测到环境变量 {HOTKEY_ENV_VAR}，重启后将以其为准"
 
 
 def failure_message(code: int, message: str) -> str:
@@ -78,6 +88,8 @@ class ClientApp(QObject):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray: ClientTray | None = ClientTray()
             self._tray.retry_requested.connect(self._on_retry)
+            self._tray.hotkey_change_requested.connect(self._on_change_hotkey)
+            self._tray.set_hotkey_label(settings.hotkey)
         else:
             logger.warning("系统托盘不可用，进入无托盘降级模式（C4）")
             self._tray = None
@@ -105,11 +117,7 @@ class ClientApp(QObject):
 
         # --- 热键 ---
         combo = parse_hotkey(settings.hotkey)
-        self._hotkey = PynputBackend(
-            combo,
-            on_press=self.sig_hotkey_press.emit,  # 回调线程仅发信号
-            on_release=self.sig_hotkey_release.emit,
-        )
+        self._hotkey = self._build_hotkey_backend(combo)
 
         # --- 网络 worker（QThread） ---
         self._worker = NetworkWorker(settings.socket_path)
@@ -199,6 +207,114 @@ class ClientApp(QObject):
 
     def _on_retry(self) -> None:
         self._request_probe()
+
+    # ------------------------------------------------------------------ 热键修改（主线程）
+
+    def _build_hotkey_backend(self, combo) -> PynputBackend:
+        """热键后端构造（单一出处：启动装配/热切换/失败恢复三处共用，🔴 禁止散写）。
+
+        回调注册 sig_hotkey_press/release.emit（回调线程红线：仅发信号）。
+        """
+        return PynputBackend(
+            combo,
+            on_press=self.sig_hotkey_press.emit,
+            on_release=self.sig_hotkey_release.emit,
+        )
+
+    def _on_change_hotkey(self) -> None:
+        """托盘「修改快捷键…」入口：仅 IDLE 态放行（🔴 禁止忙碌中热切换，
+        避免切换窗口丢失 release 事件卡死状态机）。"""
+        if self._sm.state is not State.IDLE:
+            self._notifier.notify(APP_DISPLAY_NAME, MSG_HOTKEY_BUSY, key="hotkey-busy")
+            return
+        dialog = HotkeyCaptureDialog(current=self._settings.hotkey)
+        from PySide6.QtWidgets import QDialog  # 局部 import：仅此处需要 DialogCode
+
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.expression:
+            self._apply_hotkey(dialog.expression)
+
+    def _apply_hotkey(self, expression: str) -> None:
+        """校验 → 落盘 → 热切换 → 内存/界面同步；任一步失败回滚并通知。
+
+        顺序决策（🔴 先落盘后切换）：落盘失败整体放弃，运行态快捷键不变，
+        避免「运行态已换、重启后丢失」的知行分裂。
+        """
+        # 状态复查（🔴 必须）：dialog.exec() 嵌套事件循环期间 pynput 信号照常
+        # 投递，入口 IDLE 检查后状态可能已进入 RECORDING——此处不切旧 tracker
+        # 才能避免丢失 release 事件卡死状态机
+        if self._sm.state is not State.IDLE:
+            self._notifier.notify(APP_DISPLAY_NAME, MSG_HOTKEY_BUSY, key="hotkey-busy")
+            return
+        # ① 兜底校验（解析逻辑单一出处在 hotkey.combo）
+        try:
+            new_combo = parse_hotkey(expression)
+        except ValueError as exc:
+            logger.warning("快捷键表达式非法，拒绝切换：{}", exc)
+            self._notifier.notify(APP_DISPLAY_NAME, MSG_HOTKEY_INVALID.format(exc),
+                                  key="hotkey-invalid")
+            return
+        # ② 持久化（用户配置文件层，AppImage 只读挂载下唯一合法落点）
+        try:
+            path = set_user_config_value("hotkey", expression)
+        except Exception as exc:
+            logger.error("快捷键配置写入失败：{}", exc)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_HOTKEY_PERSIST_FAILED.format(exc),
+                key="hotkey-persist-failed",
+            )
+            return
+        logger.info("快捷键配置已持久化：{} → {}", expression, path)
+        # ③ 热切换：停旧监听 → 起新监听；失败恢复原后端并回滚落盘
+        old_backend = self._hotkey
+        old_combo = old_backend._combo
+        old_backend.stop()
+        new_backend = self._build_hotkey_backend(new_combo)
+        try:
+            new_backend.start()
+        except Exception as exc:
+            logger.error("新热键监听启动失败，尝试恢复原快捷键：{}", exc)
+            self._rollback_hotkey_persist(old_combo.expression)
+            restored = self._build_hotkey_backend(old_combo)
+            try:
+                restored.start()
+                self._hotkey = restored
+            except Exception as restore_exc:  # 恢复也失败 → 明确报错，不静默空跑
+                logger.error("恢复原热键监听失败：{}", restore_exc)
+                self._set_tray(TrayStatus.ERROR, "热键监听失效")
+                self._notifier.notify(
+                    APP_DISPLAY_NAME, MSG_HOTKEY_SWITCH_FAILED.format(restore_exc),
+                    key="hotkey-switch-failed",
+                )
+                return
+            self._notifier.notify(
+                APP_DISPLAY_NAME,
+                f"新快捷键监听启动失败（{exc}），已恢复原快捷键 "
+                f"{format_hotkey_display(old_combo.expression)}",
+                key="hotkey-switch-failed",
+            )
+            return
+        self._hotkey = new_backend
+        # ④ 内存/界面同步 + 成功通知（环境变量优先级高于用户配置文件，如实告知）
+        self._settings.hotkey = expression
+        if self._tray is not None:
+            self._tray.set_hotkey_label(expression)
+        message = MSG_HOTKEY_UPDATED.format(format_hotkey_display(expression))
+        if os.environ.get(HOTKEY_ENV_VAR):
+            message += f"；{MSG_HOTKEY_ENV_OVERRIDE}"
+        self._notifier.notify(APP_DISPLAY_NAME, message, key="hotkey-updated")
+        logger.info("快捷键热切换完成：{}", expression)
+
+    def _rollback_hotkey_persist(self, old_expression: str) -> None:
+        """热切换失败后的落盘回滚（配置文件恢复原快捷键，避免知行分裂）。
+
+        回滚自身失败仅记日志：运行态已恢复原后端，残留配置下次启动仍可
+        正常加载（表达式合法），不构成启动失败风险。
+        """
+        try:
+            set_user_config_value("hotkey", old_expression)
+            logger.info("快捷键配置已回滚：{}", old_expression)
+        except Exception:
+            logger.exception("快捷键配置回滚失败（残留新值，下次启动将生效）")
 
     def _request_probe(self) -> None:
         """向网络 worker 线程投递一次 health 探测（start/重试/轮询三处共用）。
