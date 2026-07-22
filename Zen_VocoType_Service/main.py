@@ -7,8 +7,11 @@
 2. 加载配置 → 日志 → 单实例锁（flock + PID）
 3. bind Socket 并开始 accept（health/ready 立即可答）
 4. 后台线程异步加载模型 + 自检 → 推进状态 ready / error
-5. SIGTERM 确定性退出：停止 accept → 通知 worker 停止 → 释放模型
-   → 删除 Socket 文件 → 释放锁
+5. 托盘（可选增强）：有显示环境时主线程跑 Qt 事件循环承载
+   QSystemTrayIcon；headless / tray_enabled=false / 托盘不可用时
+   自动降级为 ``shutdown_event.wait()`` 纯控制台驻留
+6. SIGTERM / 托盘「退出服务」确定性退出（同一 shutdown_event 汇流）：
+   停止 accept → 通知 worker 停止 → 释放模型 → 删除 Socket 文件 → 释放锁
 """
 
 import os
@@ -61,6 +64,58 @@ def _async_load_model(ctx: ServiceContext) -> None:
     logger.info("服务就绪（ready），当前模型: {}", settings.default_model)
 
 
+def _create_tray_if_available(
+    settings: Settings, ctx: ServiceContext, shutdown_event: threading.Event
+):
+    """托盘创建（可选增强，任何失败降级为无托盘，不阻断服务）。
+
+    降级路径（任一命中即返回 None）：
+
+    - 配置 ``tray_enabled=false``（服务器/CI 部署）
+    - 无显示环境（无 DISPLAY / WAYLAND_DISPLAY，headless）
+    - 系统托盘不可用 / Qt 初始化异常
+    """
+    if not settings.tray_enabled:
+        logger.info("配置 tray_enabled=false，纯控制台模式运行")
+        return None, None
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        logger.warning("无显示环境（headless），托盘降级为纯控制台模式")
+        return None, None
+    try:
+        # 🔴 延迟导入：严禁提升到模块顶部（MODELSCOPE_CACHE 顺序红线 +
+        # headless 降级路径完全不 import Qt）
+        from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+        from zen_vocotype_service.tray.tray import ServiceTray
+
+        app = QApplication(sys.argv)  # 必须在主线程
+        app.setQuitOnLastWindowClosed(False)  # 🔴 无窗口应用，防意外退出
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.warning("系统托盘不可用，降级为纯控制台模式")
+            return None, None
+        tray = ServiceTray(ctx, poll_interval_ms=settings.tray_poll_interval_ms)
+        tray.quit_requested.connect(shutdown_event.set)  # 与 SIGTERM 汇流
+        tray.show()
+        logger.info("系统托盘已启动")
+        return app, tray
+    except Exception:
+        logger.exception("托盘初始化失败，降级为纯控制台模式（服务不受影响）")
+        return None, None
+
+
+def _run_with_tray(app, shutdown_event: threading.Event) -> None:
+    """Qt 事件循环驻留；200ms 检查停服信号 → quit → 返回后走统一退出序列。"""
+    from PySide6.QtCore import QTimer
+
+    watchdog = QTimer()
+    watchdog.setInterval(200)
+    watchdog.timeout.connect(
+        lambda: app.quit() if shutdown_event.is_set() else None
+    )
+    watchdog.start()
+    app.exec()
+
+
 def main() -> int:
     settings = _settings_for_env
     setup_logging(settings)
@@ -97,8 +152,12 @@ def main() -> int:
     )
     loader_thread.start()
 
-    # 主线程驻留至收到停服信号
-    shutdown_event.wait()
+    # 主线程驻留至收到停服信号（托盘为可选增强，app 须保持存活至 exec 结束）
+    app, tray = _create_tray_if_available(settings, ctx, shutdown_event)
+    if app is not None:
+        _run_with_tray(app, shutdown_event)  # Qt 事件循环驻留
+    else:
+        shutdown_event.wait()  # 无托盘降级：原路径驻留
 
     logger.info("执行退出序列")
     server.shutdown()

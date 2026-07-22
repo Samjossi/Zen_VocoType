@@ -12,7 +12,7 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from zen_vocotype_protocol.paths import DEFAULT_SOCKET_PATH
 from zen_vocotype_protocol.settings import ComponentSettings, component_model_config, component_root
@@ -84,6 +84,13 @@ class Settings(ComponentSettings):
     infer_timeout_s: float = DEFAULT_INFER_TIMEOUT_S
     queue_max_pending: int = DEFAULT_QUEUE_MAX_PENDING
     max_connections: int = DEFAULT_MAX_CONNECTIONS
+
+    #: 托盘状态轮询间隔（毫秒）。状态转换为人感知秒级，500ms 刷新足够灵敏且零压力
+    tray_poll_interval_ms: int = Field(default=500, ge=100)
+
+    #: 是否启用托盘。False 强制纯控制台模式（服务器/CI 部署用）；
+    #: True 时若检测到无显示环境仍自动降级（见 main.py）
+    tray_enabled: bool = True
 
     @model_validator(mode="after")
     def _check_default_model_registered(self) -> "Settings":

@@ -1,6 +1,6 @@
 [project]
 name = "zen-vocotype-service"
-version = "0.1.0"
+version = "1.0"
 description = "Zen_VocoType 服务端：FunASR 模型加载与推理、Unix Socket 服务、模型管理"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,6 +9,7 @@ dependencies = [
     "funasr",
     "torch",
     "modelscope",
+    "PySide6",
     "pydantic-settings",
     "pyyaml",
     "loguru",

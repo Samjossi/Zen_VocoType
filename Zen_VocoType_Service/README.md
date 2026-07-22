@@ -19,6 +19,41 @@ FunASR 语音识别服务端：Unix Socket 复合帧协议、模型注册表驱�
 - **单实例**：启动时 `flock` 抢锁（契约库 `paths.SERVICE_LOCK_PATH`），已有实例
   运行则报错退出非零；锁内写有 PID；kill -9 后无 stale 锁可直接重启
 
+## 系统托盘
+
+有显示环境时（DISPLAY / WAYLAND_DISPLAY）启动后自动在系统托盘显示图标；
+headless 服务器 / `tray_enabled: false` / 托盘不可用时自动降级为纯控制台模式，
+不影响服务功能。
+
+**图标状态色**（基础图标右下角色点，资产复制自 GridChat_Service/asset）：
+
+| 色点 | 含义 |
+| --- | --- |
+| 橙 | 加载中…（模型未就绪）/ 切换中… |
+| 绿 | 就绪 |
+| 红 | 错误（状态行附原因） |
+
+**右键菜单**（自上而下）：
+
+```
+Zen_VocoType_Service v1.0        ← 版本项（禁用）
+版本: 1.0（开发版/打包版）        ← 禁用
+─────────────────────────────
+状态：就绪                        ← 禁用，轮询刷新
+当前模型：paraformer-large        ← 禁用，轮询刷新
+─────────────────────────────
+切换模型 ►                       ← 注册表逐键列出，当前模型前缀 ✓
+   ├── ✓ paraformer-large           （非就绪 / 切换中 / 仅 1 模型时禁用）
+   └── sensevoice-small
+─────────────────────────────
+打开日志目录                      ← 打开 log_dir
+退出服务                          ← 与 SIGTERM 同一退出序列
+```
+
+- 「切换模型」与客户端 `model_switch` 请求等效，统一经推理 worker 队列串行
+  （与推理天然互斥，失败自动回滚）；托盘在后台线程提交，不阻塞界面
+- 托盘相关配置：`tray_enabled`（默认 true）、`tray_poll_interval_ms`（默认 500）
+
 ## 配置（单一配置源）
 
 `src/zen_vocotype_service/config.py` 的 `Settings` + `config.yaml` + 环境变量
@@ -34,6 +69,8 @@ FunASR 语音识别服务端：Unix Socket 复合帧协议、模型注册表驱�
 | `infer_timeout_s` | 60 | 推理超时预算（依据见验收记录实测） |
 | `queue_max_pending` | 4 | 推理队列积压阈值，超过拒绝新请求 |
 | `max_connections` | 8 | 连接数上限（防御性） |
+| `tray_enabled` | true | false 强制纯控制台模式（headless 自动降级见「系统托盘」） |
+| `tray_poll_interval_ms` | 500 | 托盘状态轮询间隔（≥100） |
 
 ### 模型注册表写法
 
@@ -90,8 +127,10 @@ Zen_VocoType_Service/
 │   ├── protocol_io.py      # 响应构建 + ProtocolError
 │   ├── handlers/           # health/ready/recognize/model_info/model_switch
 │   ├── models/             # registry / loader（含自检）/ manager（原子切换）
-│   └── inference/          # 单 worker 推理队列
-├── assets/selftest_16k.pcm # 自检音频（真实语音 3s，来源见 loader 注释）
+│   ├── inference/          # 单 worker 推理队列
+│   └── tray/               # 系统托盘（icon_loader 双环境解析 + ServiceTray）
+├── assets/                 # 托盘图标五档（icon*.png，复制自 GridChat_Service/asset）
+│                           #   + 自检音频 selftest_16k.pcm（来源见 loader 注释）
 ├── logs/                   # 运行日志 + 阶段 1 实测数据（phase1_measurements.json）
 ├── models/                 # MODELSCOPE_CACHE（模型外置目录）
 └── tests/                  # pytest（slow 标记为真实模型/进程级测试）
