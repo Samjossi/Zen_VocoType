@@ -7,7 +7,8 @@
 - 配置源优先级与组件根推算的**行为逻辑单一出处**为契约库
   ``zen_vocotype_protocol.settings``，本文件仅声明字段与默认值
 - Socket 路径默认值唯一出处为契约库 ``zen_vocotype_protocol.paths``，此处仅允许覆盖
-- 模型注册表内嵌于本配置（选型二），缺省内置 paraformer-large 与 sensevoice-small
+- 模型注册表内嵌于本配置（选型二），缺省内置 paraformer-large、sensevoice-small
+  与 seaco-paraformer 三条
 """
 
 from pathlib import Path
@@ -76,6 +77,13 @@ DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
         "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
         "description": "多语言语音理解：中/粤/英/日/韩等 50+ 语种，"
         "兼具情感识别与声音事件检测；推理极快（10 秒音频约 70ms）。",
+    },
+    "seaco-paraformer": {
+        "model_id": "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "punc_model_id": "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+        "description": "热词定制识别（ICASSP 2024）。SeACo-Paraformer 通过后验概率"
+        "融合激励热词，提升专有名词/术语的召回与准确率；不传热词时即通用中文识别。",
     },
 }
 
