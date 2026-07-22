@@ -16,13 +16,13 @@ from pathlib import Path
 
 from loguru import logger
 
-#: 托盘图标文件名（复制自 GridChat_Service/asset，icon.png 为兜底）
+#: 托盘图标文件名（复制自 GridChat_Service/asset 四档尺寸；
+#: 同目录 icon.png 为另一套图形（树状），经审定为错误资产，不采用已删除）
 ICON_FILENAMES: tuple[str, ...] = (
     "icon_32.png",
     "icon_64.png",
     "icon_128.png",
     "icon_256.png",
-    "icon.png",
 )
 
 

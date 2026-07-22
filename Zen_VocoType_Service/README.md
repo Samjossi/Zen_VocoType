@@ -129,7 +129,7 @@ Zen_VocoType_Service/
 │   ├── models/             # registry / loader（含自检）/ manager（原子切换）
 │   ├── inference/          # 单 worker 推理队列
 │   └── tray/               # 系统托盘（icon_loader 双环境解析 + ServiceTray）
-├── assets/                 # 托盘图标五档（icon*.png，复制自 GridChat_Service/asset）
+├── assets/                 # 托盘图标四档（icon_{32,64,128,256}.png，复制自 GridChat_Service/asset）
 │                           #   + 自检音频 selftest_16k.pcm（来源见 loader 注释）
 ├── logs/                   # 运行日志 + 阶段 1 实测数据（phase1_measurements.json）
 ├── models/                 # MODELSCOPE_CACHE（模型外置目录）

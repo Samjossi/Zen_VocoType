@@ -231,7 +231,7 @@ class TestIconLoader:
         assert icon.isNull()  # 空 QIcon 降级，不崩溃
 
     def test_real_assets_load(self):
-        """复制自 GridChat_Service 的五档图标全部可加载。"""
+        """复制自 GridChat_Service 的四档图标全部可加载。"""
         icon = load_tray_icon()
         assert not icon.isNull()
 
