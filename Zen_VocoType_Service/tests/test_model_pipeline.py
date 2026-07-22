@@ -69,7 +69,8 @@ class TestAtomicSwitch:
             info = manager.model_info()
             assert info["current_model"] == "sensevoice-small"
             loaded_flags = {m["name"]: m["loaded"] for m in info["available_models"]}
-            assert loaded_flags == {"paraformer-large": False, "sensevoice-small": True}
+            assert loaded_flags["paraformer-large"] is False
+            assert loaded_flags["sensevoice-small"] is True
 
             # 加载失败回滚：注入坏条目，旧模型不受影响
             settings.models["broken"] = settings.models[

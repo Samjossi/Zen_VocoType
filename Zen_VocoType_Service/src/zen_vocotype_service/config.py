@@ -12,6 +12,7 @@
 """
 
 from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -48,6 +49,13 @@ class ModelEntry(BaseModel):
     punc_model_id: str | None = None
     #: 展示层描述（托盘「模型清单…」用；🔴 属展示元数据，不进协议 model_info 响应）
     description: str = ""
+    #: 引擎类型：加载/推理分支的唯一依据（loader/worker 各一处 if）。
+    #: 默认 "funasr"，现有条目与用户旧配置零感知
+    engine_type: Literal["funasr", "qwen3-asr"] = "funasr"
+    #: 引擎特定加载附加参数，原样并入引擎加载调用：
+    #: funasr → AutoModel(**params)；qwen3-asr → Qwen3ASRModel.from_pretrained(**params)
+    #: （例：Fun-ASR-Nano 需 trust_remote_code/remote_code）
+    extra_params: dict[str, Any] = {}
 
     @model_validator(mode="after")
     def _check_source_exclusive(self) -> "ModelEntry":
@@ -84,6 +92,23 @@ DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
         "punc_model_id": "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
         "description": "热词定制识别（ICASSP 2024）。SeACo-Paraformer 通过后验概率"
         "融合激励热词，提升专有名词/术语的召回与准确率；不传热词时即通用中文识别。",
+    },
+    "fun-asr-nano": {
+        "model_id": "FunAudioLLM/Fun-ASR-Nano-2512",
+        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "extra_params": {"trust_remote_code": True, "remote_code": "./model.py"},
+        "description": "新一代通用识别大模型（阿里通义 2025-12，0.8B）。SenseVoice 编码器"
+        " + Qwen3-0.6B 解码器的端到端 LLM-ASR，自带标点与时间戳，支持中/英/日"
+        "及中文七大方言、歌词说唱识别，难例与长尾词表现优于 Paraformer 代。"
+        "支持热词注入。CPU 实测 RTF≈0.34，日常可用。",
+    },
+    "qwen3-asr-1.7b": {
+        "model_id": "Qwen/Qwen3-ASR-1.7B",
+        "engine_type": "qwen3-asr",
+        "description": "高精度多语言识别（阿里 Qwen 2026-01，1.7B）。开源 ASR SOTA："
+        "30 种语言 + 22 种中文方言，支持热词/上下文增强与最长 20 分钟单条音频，"
+        "复杂声学环境与歌声识别强。⚠️ CPU 实测 RTF≈1.2（慢于实时），"
+        "仅建议短音频或实验性使用。",
     },
 }
 

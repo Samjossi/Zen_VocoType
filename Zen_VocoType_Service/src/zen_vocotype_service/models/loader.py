@@ -15,6 +15,8 @@
 import sys
 from pathlib import Path
 
+from zen_vocotype_protocol.paths import DEFAULT_SAMPLE_RATE
+
 from zen_vocotype_service.config import COMPONENT_ROOT, ModelEntry
 from zen_vocotype_service.logging_setup import logger
 
@@ -62,20 +64,50 @@ def _build_automl_params(entry: ModelEntry) -> dict:
         params["punc_model"] = entry.punc_model_id
     params["disable_update"] = True
     params["device"] = "cpu"
+    #: 引擎特定附加参数最后并入（例：Fun-ASR-Nano 的 trust_remote_code/remote_code）
+    params.update(entry.extra_params)
     return params
 
 
 def load_model(name: str, entry: ModelEntry) -> LoadedModel:
-    """按注册表条目加载模型。
+    """按注册表条目加载模型（引擎类型分支唯一加载点）。
 
     :raises ModelLoadError: 加载失败，message 含真实原因
     """
+    if entry.engine_type == "qwen3-asr":
+        return _load_qwen3_asr(name, entry)
     params = _build_automl_params(entry)
     logger.info("开始加载模型 {}（{}）", name, entry.source)
     try:
         from funasr import AutoModel  # 延迟导入：MODELSCOPE_CACHE 须先就位
 
         model = AutoModel(**params)
+    except Exception as exc:
+        raise ModelLoadError(f"模型 {name!r} 加载失败: {exc}") from exc
+    logger.info("模型 {} 加载完成", name)
+    return LoadedModel(name, entry, model)
+
+
+def _load_qwen3_asr(name: str, entry: ModelEntry) -> LoadedModel:
+    """加载 Qwen3-ASR 引擎（transformers 后端，CPU）。
+
+    ``model_id`` 条目先经 modelscope 下载到 MODELSCOPE_CACHE（与 FunASR
+    同一缓存目录统一管理），再取本地路径交给 ``Qwen3ASRModel``；
+    ``local_path`` 条目直接本地加载。
+    """
+    logger.info("开始加载模型 {}（{}，引擎 qwen3-asr）", name, entry.source)
+    try:
+        from modelscope import snapshot_download  # 延迟导入，同 funasr 策略
+        from qwen_asr import Qwen3ASRModel
+
+        if entry.local_path is not None:
+            model_path = str(entry.local_path)
+        else:
+            model_path = snapshot_download(entry.model_id)
+        model = Qwen3ASRModel.from_pretrained(
+            model_path,
+            **{"device_map": "cpu", **entry.extra_params},
+        )
     except Exception as exc:
         raise ModelLoadError(f"模型 {name!r} 加载失败: {exc}") from exc
     logger.info("模型 {} 加载完成", name)
@@ -89,6 +121,25 @@ def pcm_to_float_array(pcm: bytes):
     return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / PCM_NORMALIZE
 
 
+def run_inference(loaded: LoadedModel, audio) -> dict:
+    """对已加载模型跑一次推理（引擎类型分支唯一推理点）。
+
+    :param audio: float32 归一化数组（``pcm_to_float_array`` 产物）
+    :return: ``{"text", "confidence"}``；confidence 模型不给时为 None（🔴 禁止编造）
+    :raises RuntimeError: 推理失败或返回结构非法
+    """
+    if loaded.entry.engine_type == "qwen3-asr":
+        results = loaded.model.transcribe(audio=(audio, DEFAULT_SAMPLE_RATE))
+        if not results:
+            raise RuntimeError("推理返回结构非法: 空结果列表")
+        return {"text": results[0].text, "confidence": None}
+    result = loaded.model.generate(input=audio, cache={}, batch_size_s=60)
+    if not isinstance(result, list) or not result or "text" not in result[0]:
+        raise RuntimeError(f"推理返回结构非法: {type(result).__name__}")
+    item = result[0]
+    return {"text": item["text"], "confidence": item.get("confidence")}
+
+
 def selftest(loaded: LoadedModel) -> None:
     """试推理自检：真实语音 PCM 跑一次推理，验证通路与返回结构。
 
@@ -99,15 +150,11 @@ def selftest(loaded: LoadedModel) -> None:
         raise ModelLoadError(f"自检音频缺失: {pcm_path}")
     audio = pcm_to_float_array(pcm_path.read_bytes())
     try:
-        result = loaded.model.generate(
-            input=audio,
-            cache={},
-            batch_size_s=60,
-        )
+        outcome = run_inference(loaded, audio)
     except Exception as exc:
         raise ModelLoadError(f"模型 {loaded.name!r} 试推理自检失败: {exc}") from exc
-    if not isinstance(result, list) or not result or "text" not in result[0]:
+    if not isinstance(outcome["text"], str):
         raise ModelLoadError(
-            f"模型 {loaded.name!r} 自检返回结构非法: {type(result).__name__}"
+            f"模型 {loaded.name!r} 自检返回结构非法: text 非字符串"
         )
-    logger.info("模型 {} 自检通过（返回文本长度 {}）", loaded.name, len(result[0]["text"]))
+    logger.info("模型 {} 自检通过（返回文本长度 {}）", loaded.name, len(outcome["text"]))

@@ -11,7 +11,7 @@ import pytest
 
 from zen_vocotype_protocol import errors
 
-from zen_vocotype_service.config import Settings
+from zen_vocotype_service.config import ModelEntry, Settings
 from zen_vocotype_service.context import ServiceContext
 from zen_vocotype_service.handlers import model_switch, recognize
 from zen_vocotype_service.inference.worker import InferenceWorker
@@ -45,9 +45,11 @@ class _FakeModel:
 
 
 class _FakeLoaded:
-    def __init__(self, name, model):
+    def __init__(self, name, model, entry=None):
         self.name = name
         self.model = model
+        #: 引擎分支依据；默认 funasr（run_inference 走 generate 路径）
+        self.entry = entry or ModelEntry(model_id="fake")
 
     def release(self):
         pass

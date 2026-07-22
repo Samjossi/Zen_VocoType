@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from zen_vocotype_service.config import Settings
 from zen_vocotype_service.logging_setup import logger
-from zen_vocotype_service.models.loader import pcm_to_float_array
+from zen_vocotype_service.models.loader import pcm_to_float_array, run_inference
 from zen_vocotype_service.models.manager import ModelManager
 
 #: worker 从队列取任务的阻塞超时（秒）：周期性检查停止标志
@@ -141,14 +141,10 @@ class InferenceWorker:
             raise RuntimeError("模型未加载")
         audio = pcm_to_float_array(pcm)
         duration_ms = len(pcm) // 2 * 1000 // 16000
-        result = current.model.generate(input=audio, cache={}, batch_size_s=60)
-        if not isinstance(result, list) or not result or "text" not in result[0]:
-            raise RuntimeError(f"推理返回结构非法: {type(result).__name__}")
-        item = result[0]
+        outcome = run_inference(current, audio)
         return {
-            "text": item["text"],
-            # 置信度模型不给时为 None，🔴 禁止编造
-            "confidence": item.get("confidence"),
+            "text": outcome["text"],
+            "confidence": outcome["confidence"],
             "duration_ms": duration_ms,
         }
 

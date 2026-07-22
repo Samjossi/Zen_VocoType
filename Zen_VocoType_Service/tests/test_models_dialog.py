@@ -40,12 +40,14 @@ class TestDescriptionField:
         for name, entry in settings.models.items():
             assert entry.description, f"内置条目 {name} 缺描述"
 
-    def test_builtin_registry_has_three_models(self):
-        """内置注册表定稿三条：通用 / 多语言 / 热词。"""
+    def test_builtin_registry_has_five_models(self):
+        """内置注册表定稿五条：通用 / 多语言 / 热词 + 新一代增量两款。"""
         assert set(Settings().models) == {
             "paraformer-large",
             "sensevoice-small",
             "seaco-paraformer",
+            "fun-asr-nano",
+            "qwen3-asr-1.7b",
         }
 
 

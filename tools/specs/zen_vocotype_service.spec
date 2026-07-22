@@ -22,9 +22,16 @@ NAME = "zen_vocotype_service"
 # 静态分析不可见，🔴 必须 collect_all 显式收编——首轮构建实测三者全部漏收
 # （产物 345MiB 无 torch，--version 探针不触发模型加载无法暴露）。
 # torch 的二进制/动态库由 contrib hook-torch 随 hiddenimports 触发收编。
+# qwen_asr（Qwen3-ASR 引擎）同在 loader.py 延迟导入，同款收编；
+# 🔴 其 cli 子模块引入 gradio/vllm（演示/部署用，本项目不用且 vllm 未安装），
+# 必须剔除——否则打包膨胀数百 MiB 且 serve 模块 import vllm 直接失败。
+# nagisa/dynet 为 forced aligner 专属重依赖（死路径，见 rhook_qwen_asr.py），
+# 分析期排除 + 运行期占位模块兜底。
 _ml_datas, _ml_binaries, _ml_hiddenimports = [], [], []
-for _pkg in ("torch", "funasr", "modelscope"):
+for _pkg in ("torch", "funasr", "modelscope", "qwen_asr"):
     _d, _b, _h = collect_all(_pkg)
+    if _pkg == "qwen_asr":
+        _h = [m for m in _h if not m.startswith("qwen_asr.cli")]
     _ml_datas += _d
     _ml_binaries += _b
     _ml_hiddenimports += _h
@@ -37,8 +44,8 @@ a = Analysis(
     hiddenimports=_ml_hiddenimports,
     binaries=_ml_binaries,
     hookspath=[],
-    runtime_hooks=[],
-    excludes=QT_EXCLUDES,
+    runtime_hooks=[SPECPATH + "/rhook_qwen_asr.py"],  # noqa: F821
+    excludes=QT_EXCLUDES + ["nagisa", "dynet"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

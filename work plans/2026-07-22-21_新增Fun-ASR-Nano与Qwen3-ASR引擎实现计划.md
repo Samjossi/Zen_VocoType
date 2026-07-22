@@ -1,6 +1,6 @@
-> **状态**：草稿
+> **状态**：已实施
 > **范围**：`Zen_VocoType_Service`（引擎注册表、加载器、推理 Worker）、`Zen_VocoType_Protocol`（视需要）
-> **时间**：2026-07-22 21:00（设计，UTC+8）
+> **时间**：2026-07-22 21:00（设计，UTC+8）/ 2026-07-23 06:00（实施）
 > **优先级**：高
 
 # 新增 Fun-ASR-Nano 与 Qwen3-ASR-1.7B 引擎实现计划
@@ -122,4 +122,52 @@
 
 ---
 
-*创建于 2026-07-22 21:00 (UTC+8)*
+## 七、实施记录（2026-07-23）
+
+**实际完成**：四阶段全部完成并真机验收，实际耗时约 0.5 天（远优于预估，
+原因是阶段 2 分支设计最小化、两引擎一次点亮）。
+
+### 关键实施事实
+
+1. **Fun-ASR-Nano 并非「一行注册」**：调研（阶段 1.1）确认其需
+   `trust_remote_code=True` + `remote_code="./model.py"` 额外 AutoModel 参数，
+   落入计划的预警分支——解法为 `ModelEntry` 新增通用 `extra_params` 字段
+   （并入引擎加载调用），而非为该模型单开分支，克制风格保持。
+2. **依赖冲突实锤**：`qwen-asr` 0.0.6 将 transformers 从 5.14.1 降级钉死到
+   4.57.6；安装后立即跑旧引擎真实加载 slow 回归（4 项全过），确认无破坏。
+   qwen-asr 同时带入 gradio/sox 等演示依赖（开发环境无害，打包期剔除）。
+3. **RTF 实测**（自检 3 秒 PCM / 打包产物 2.8 秒真实录音，CPU）：
+   - `fun-asr-nano`：稳态 RTF ≈ 0.34 ✅ 日常可用（远好于 GPU 专属的预判）
+   - `qwen3-asr-1.7b`：稳态 RTF ≈ 1.1–1.2 ⚠️ 慢于实时，description 已标注
+     「仅建议短音频或实验性使用」，与计划预案一致。
+4. **打包坑（计划外新增）**：`import nagisa`（qwen_asr forced aligner 链路）
+   在 frozen 环境失败——nagisa 导入即实例化 Tagger 加载 46MB 数据、依赖
+   dynet 数百 MB、包内 Python2 式裸导入无法被 PYZ 解析。解法：forced
+   aligner 为死路径（`_load_qwen3_asr` 永不传 forced_aligner），spec 排除
+   nagisa/dynet + runtime hook（`tools/specs/rhook_qwen_asr.py`）注入占位模块。
+   同时剔除 `qwen_asr.cli`（gradio/vllm，后者未安装会导致分析失败）。
+5. **产物体积**：service onedir 1783.9 MiB（qwen_asr 本体仅 552K，
+   transformers 此前已随 funasr 收编，体积增量主要来自 qwen-asr 依赖链）。
+
+### 验收记录
+
+| 项 | 结果 |
+|---|---|
+| 服务端单测（含新增 19 项引擎分支测试 test_engine_branch.py） | 102 passed |
+| 服务端 slow（真实模型加载/切换/协议 E2E） | 8 passed |
+| 契约库 / 客户端快速测试 | 39 / 177 passed |
+| 真机加载+自检+RTF（两新引擎，真实下载） | ✅ 见上 |
+| 打包产物 e2e_packaged（9 段真实录音） | 重合率 1.000 全过 |
+| 打包产物协议级切换两新引擎 → 识别 → 切回 | ✅ 识别文本正确 |
+
+### 遗留事项（不阻塞，后续按需）
+
+- `infer_timeout_s`（60s）对 qwen3-asr 长音频不足（RTF 1.2 × 10 分钟上限
+  录音需 12 分钟）；当前约定 qwen3-asr 仅用于短音频，如需长音频再议。
+- qwen-asr 的 gradio 等演示依赖污染开发环境 lockfile，后续可考虑可选
+  extras 化（需等 qwen-asr 官方拆分或自行 vendor）。
+- `device` 配置项开放 GPU 推理（两款 LLM-ASR 在 GPU 下 RTF 可降一个量级）。
+
+---
+
+*创建于 2026-07-22 21:00 (UTC+8)；实施完成于 2026-07-23 06:00 (UTC+8)*

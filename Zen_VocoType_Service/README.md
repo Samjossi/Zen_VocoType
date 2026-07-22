@@ -1,7 +1,7 @@
 # Zen_VocoType_Service（服务端）
 
-FunASR 语音识别服务端：Unix Socket 复合帧协议、模型注册表驱动的加载/原子切换、
-先监听后异步加载、单实例锁 + 确定性退出。
+语音识别服务端（FunASR / Qwen3-ASR 双引擎）：Unix Socket 复合帧协议、
+模型注册表驱动的加载/原子切换、先监听后异步加载、单实例锁 + 确定性退出。
 
 ## 启动与停服
 
@@ -71,7 +71,7 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 | `models_dir` | 契约库 `paths.DEFAULT_MODELS_DIR`（`$XDG_DATA_HOME/zen_vocotype/models`，回退 `~/.local/share/...`） | MODELSCOPE_CACHE 指向（入口第一行硬设置，顺序敏感）；🔴 默认不落组件根（AppImage 只读挂载写失败，阶段 4 T4.1） |
 | `default_model` | `paraformer-large` | 必须存在于注册表，否则启动报错退出 |
 | `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | loguru 轮转（10MB × 5）；三组件共享目录、文件名区分 |
-| `models` | 内置两条（见下） | 模型注册表（config.yaml 内嵌） |
+| `models` | 内置五条（见下） | 模型注册表（config.yaml 内嵌） |
 | `infer_timeout_s` | 60 | 推理超时预算（依据见验收记录实测） |
 | `queue_max_pending` | 4 | 推理队列积压阈值，超过拒绝新请求 |
 | `max_connections` | 8 | 连接数上限（防御性） |
@@ -97,6 +97,21 @@ default_model: paraformer-large
 
 - `model_id`（缓存命中/在线下载）与 `local_path`（本地直载）每条目二选一
 - 注册表条目支持挂附属 VAD / 标点模型
+- `engine_type`：`funasr`（默认，可省略）/ `qwen3-asr`；加载与推理分支的唯一依据
+- `extra_params`：引擎特定加载附加参数（funasr 并入 `AutoModel()`，
+  qwen3-asr 并入 `Qwen3ASRModel.from_pretrained()`）；
+  例：Fun-ASR-Nano 需 `trust_remote_code: true` + `remote_code: ./model.py`
+
+### 内置引擎一览
+
+| 注册名 | 引擎 | 定位 | CPU 实测 RTF |
+| --- | --- | --- | --- |
+| `paraformer-large` | funasr | 通用中文离线识别（默认） | 快（非自回归） |
+| `sensevoice-small` | funasr | 多语言 + 情感/事件识别 | 极快 |
+| `seaco-paraformer` | funasr | 热词定制识别 | 快 |
+| `fun-asr-nano` | funasr | 新一代 LLM-ASR 通用识别（自带标点，支持热词/方言） | ≈0.34 |
+| `qwen3-asr-1.7b` | qwen3-asr | 高精度多语言/方言 SOTA（⚠️ 慢于实时，短音频/实验性） | ≈1.2 |
+
 - 模型缓存布局即 modelscope 现行布局（`models/models/iic--<名>/snapshots/master`），
   缓存命中则离线加载，未命中在线下载（进度以日志呈现）
 

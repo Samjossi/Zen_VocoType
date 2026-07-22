@@ -9,6 +9,7 @@ dependencies = [
     "funasr",
     "torch",
     "modelscope",
+    "qwen-asr",
     "PySide6",
     "pydantic-settings",
     "pyyaml",
