@@ -1,6 +1,6 @@
 [project]
 name = "zen-vocotype-service"
-version = "1.0"
+dynamic = ["version"]
 description = "Zen_VocoType 服务端：FunASR 模型加载与推理、Unix Socket 服务、模型管理"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,11 @@ dependencies = [
     "pyyaml",
     "loguru",
 ]
+
+[tool.hatch.version]
+#: 版本号单一出处为 version.py 的 SERVICE_VERSION（🔴 两位数 major.minor 延续）
+path = "src/zen_vocotype_service/version.py"
+pattern = "SERVICE_VERSION: str = \"(?P<version>[^\"]+)\""
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zen_vocotype_service"]

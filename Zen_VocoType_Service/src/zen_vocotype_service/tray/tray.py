@@ -142,6 +142,11 @@ class ServiceTray(QObject):
 
         self._tray.setContextMenu(self._menu)
 
+        # 状态图标缓存（状态仅 3 种，构造期预生成；避免稳态 2Hz 重绘 + SNI 广播）
+        self._status_icons = {s: status_icon(self._base_icon, s) for s in TrayStatus}
+        #: 上次应用的快照（status, model, detail, switching）；None 表示尚未应用
+        self._last_snapshot: tuple | None = None
+
         # 状态轮询（Qt 主线程执行；读取源全部线程安全）
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(poll_interval_ms)
@@ -161,13 +166,21 @@ class ServiceTray(QObject):
     # ------------------------------------------------------------------
 
     def _refresh(self) -> None:
-        """轮询 ServiceContext 快照，刷新图标色 + 状态行 + 模型行 + 子菜单。"""
+        """轮询 ServiceContext 快照，刷新图标色 + 状态行 + 模型行 + 子菜单。
+
+        快照未变化时直接返回（稳态零绘制、零 SNI NewIcon 广播）。
+        """
         state = self._ctx.state
         worker = self._ctx.worker
         status = state.status
         model = state.current_model
         detail = state.error_detail or ""
         switching = worker is not None and worker.switching
+
+        snapshot = (status, model, detail, switching)
+        if snapshot == self._last_snapshot:
+            return
+        self._last_snapshot = snapshot
 
         if status == STATUS_ERROR:
             tray_status = TrayStatus.ERROR
@@ -186,7 +199,7 @@ class ServiceTray(QObject):
             label = TrayStatus.LOADING.label
             status_text = f"状态：{label}"
 
-        self._tray.setIcon(status_icon(self._base_icon, tray_status))
+        self._tray.setIcon(self._status_icons[tray_status])
         self._status_action.setText(status_text)
         self._model_action.setText(f"当前模型：{model}" if model else "当前模型：—")
         self._tray.setToolTip(f"{APP_DISPLAY_NAME} — {label}")
@@ -216,6 +229,12 @@ class ServiceTray(QObject):
         worker = self._ctx.worker
         if worker is None:
             logger.warning("切换模型请求被忽略（worker 未就绪）：{}", model_name)
+            return
+        if worker.switching:
+            # 🔴 轮询间隙（≤500ms）内双击或与 Socket 客户端并发切换的守卫：
+            # 重复提交会让前序任务的 finally 提前清除后序任务的切换标记，
+            # 导致切换期间 recognize 的 2002 拒绝守卫失效（worker.py 语义红线）
+            logger.warning("切换模型请求被忽略（切换进行中）：{}", model_name)
             return
 
         def _do_switch() -> None:

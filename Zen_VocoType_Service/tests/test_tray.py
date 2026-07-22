@@ -56,17 +56,19 @@ def _menu_texts(tray: ServiceTray) -> list[str]:
 
 
 class _FakeWorker:
-    """submit_switch 记录调用的假 worker。"""
+    """submit_switch 记录调用与调用线程的假 worker。"""
 
     def __init__(self, switching: bool = False) -> None:
         self._switching = switching
         self.switched: list[str] = []
+        self.call_thread_idents: list[int] = []
 
     @property
     def switching(self) -> bool:
         return self._switching
 
     def submit_switch(self, model_name: str) -> None:
+        self.call_thread_idents.append(threading.get_ident())
         self.switched.append(model_name)
 
 
@@ -177,6 +179,16 @@ class TestSwitchAvailability:
         while not worker.switched and time.monotonic() < deadline:
             time.sleep(0.01)
         assert worker.switched == ["sensevoice-small"]
+        # 🔴 必须在非 Qt 主线程执行（主线程同步调用会冻结托盘最长 60s）
+        assert worker.call_thread_idents[0] != main_thread_ident
+
+    def test_click_ignored_while_switching(self, tray, ctx):
+        """切换进行中点击被守卫拦截，不重复提交（竞态窗口修复固化）。"""
+        ctx.state.mark_ready("paraformer-large")
+        worker = _FakeWorker(switching=True)
+        ctx.worker = worker
+        tray._on_switch_model("sensevoice-small")
+        assert worker.switched == []
 
 
 class TestStatusIcon:
