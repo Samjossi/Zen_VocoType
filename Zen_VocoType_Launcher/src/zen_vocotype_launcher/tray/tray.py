@@ -60,6 +60,9 @@ class LauncherTray(QObject):
     client_binary_reset_requested = Signal()
     #: 用户点击「退出启动器」（🔴 不终止两端，装配层仅退出 Launcher 自身）
     quit_requested = Signal()
+    #: 右键菜单弹出 / 关闭（装配层据此暂停/恢复自动退出倒计时）
+    menu_opened = Signal()
+    menu_closed = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -126,6 +129,10 @@ class LauncherTray(QObject):
         self._quit_action.triggered.connect(self.quit_requested)
 
         self._tray.setContextMenu(self._menu)
+
+        # 菜单开合透传（装配层暂停/恢复自动退出倒计时；托盘零业务逻辑）
+        self._menu.aboutToShow.connect(self.menu_opened)
+        self._menu.aboutToHide.connect(self.menu_closed)
 
     @property
     def tray_icon(self) -> QSystemTrayIcon:

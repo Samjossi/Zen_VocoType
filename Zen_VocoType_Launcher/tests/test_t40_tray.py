@@ -256,6 +256,86 @@ class TestAutoExit:
         tray_app._on_start()
         assert not tray_app._auto_exit_timer.isActive()
 
+    def test_menu_open_pauses_countdown_resume_continues(self, tray_app, monkeypatch):
+        """菜单打开期间倒计时冻结；关闭后从剩余秒数继续。"""
+        quit_called = []
+        monkeypatch.setattr(
+            tray_app._qapp, "quit", lambda: quit_called.append(1)
+        )
+        tray_app._settings.auto_exit_delay_s = 5.0
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert tray_app._auto_exit_timer.isActive()
+        # 菜单弹出：计时器停、剩余秒数冻结、文案提示已暂停
+        tray_app._tray.menu_opened.emit()
+        assert not tray_app._auto_exit_timer.isActive()
+        assert tray_app._auto_exit_remaining == 5
+        assert "已暂停" in tray_app._tray._progress_action.text()
+        # 菜单关闭：从剩余 5 秒继续倒计时
+        tray_app._tray.menu_closed.emit()
+        assert tray_app._auto_exit_timer.isActive()
+        assert tray_app._auto_exit_remaining == 5
+        for _ in range(5):
+            tray_app._on_auto_exit_tick()
+        assert quit_called == [1]
+
+    def test_zero_delay_pending_while_menu_open(self, tray_app, monkeypatch):
+        """delay=0 且菜单打开：不立即退出，菜单关闭后补执行。"""
+        quit_called = []
+        monkeypatch.setattr(
+            tray_app._qapp, "quit", lambda: quit_called.append(1)
+        )
+        tray_app._settings.auto_exit_delay_s = 0.0
+        tray_app._tray.menu_opened.emit()  # 先看菜单，编排随后完成
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert quit_called == []  # 🔴 菜单打开中禁止退出
+        assert tray_app._exit_pending_immediate
+        tray_app._tray.menu_closed.emit()
+        assert quit_called == [1]
+
+    def test_dialog_pauses_countdown(self, tray_app, monkeypatch):
+        """设置对话框弹出期间倒计时冻结（菜单已先关闭的场景）。"""
+        quit_called = []
+        monkeypatch.setattr(
+            tray_app._qapp, "quit", lambda: quit_called.append(1)
+        )
+        tray_app._settings.auto_exit_delay_s = 4.0
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert tray_app._auto_exit_timer.isActive()
+
+        observed = {}
+
+        def fake_get_int(*a, **k):
+            # 对话框弹出期间：计时器必须处于停止态
+            observed["timer_active"] = tray_app._auto_exit_timer.isActive()
+            return (7, True)
+
+        monkeypatch.setattr(
+            "PySide6.QtWidgets.QInputDialog.getInt", staticmethod(fake_get_int)
+        )
+        value = tray_app._ask_int("标题", "标签", 4.0, 300)
+        assert value == 7
+        assert observed["timer_active"] is False
+        assert tray_app._auto_exit_remaining == 4  # 未流逝
+        # 对话框关闭后倒计时恢复
+        assert tray_app._auto_exit_timer.isActive()
+
+    def test_nested_pause_only_resumes_at_zero(self, tray_app, monkeypatch):
+        """嵌套暂停（菜单 + 对话框）：计数归零才恢复倒计时。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        tray_app._settings.auto_exit_delay_s = 3.0
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        tray_app._pause_auto_exit()  # 菜单打开
+        tray_app._pause_auto_exit()  # 对话框打开
+        tray_app._resume_auto_exit()  # 对话框关闭——仍有一层暂停
+        assert not tray_app._auto_exit_timer.isActive()
+        tray_app._resume_auto_exit()  # 菜单关闭——归零恢复
+        assert tray_app._auto_exit_timer.isActive()
+
+    def test_resume_without_pause_warns_no_crash(self, tray_app, monkeypatch):
+        """未暂停时的恢复调用：告警且不崩溃（防御性边界）。"""
+        tray_app._resume_auto_exit()
+        assert tray_app._exit_pause_count == 0
+
 
 class _FakeThread:
     """QThread 替身：不发线程，同步跳过（仅验证 _stop_auto_exit 接线）。"""

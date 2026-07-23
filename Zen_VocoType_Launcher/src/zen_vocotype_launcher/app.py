@@ -5,6 +5,7 @@
 - QApplication + LauncherTray 装配；编排经 QThread 执行（🔴 禁止阻塞 Qt
   主线程），状态回调经 Qt Signal 桥接回主线程
 - 成功路径：编排完成后经 ``auto_exit_delay_s`` 倒计时自行退出（0 = 立即）；
+  右键菜单 / 设置对话框打开期间倒计时暂停（立即退出亦挂起），关闭后恢复；
   失败路径：托盘停留（状态行红字错误 + 补救入口），🔴 不自动退出
 - 三个延迟设置 + 组件位置设置：「校验 → 先落盘 → 后切内存 → 刷标签 → 通知」
   （T33/T35 模板；落盘走契约库 ``set_user_config_value``，🔴 禁止写包内
@@ -154,6 +155,10 @@ class LauncherTrayApp:
         self._auto_exit_timer = QTimer(self._qapp)
         self._auto_exit_timer.setInterval(1000)
         self._auto_exit_timer.timeout.connect(self._on_auto_exit_tick)
+        # 暂停计数：右键菜单 / 设置对话框打开一层 +1，关闭一层 -1；
+        # >0 期间冻结倒计时（含 delay=0 的立即退出挂起）
+        self._exit_pause_count = 0
+        self._exit_pending_immediate = False
 
         self._QThread = QThread
 
@@ -180,6 +185,8 @@ class LauncherTrayApp:
         t.service_binary_reset_requested.connect(self._on_reset_service_binary)
         t.client_binary_change_requested.connect(self._on_change_client_binary)
         t.client_binary_reset_requested.connect(self._on_reset_client_binary)
+        t.menu_opened.connect(self._pause_auto_exit)
+        t.menu_closed.connect(self._resume_auto_exit)
         t.quit_requested.connect(self._on_quit)
 
     # ------------------------------------------------------------------
@@ -276,21 +283,67 @@ class LauncherTrayApp:
             self._notify("Zen_VocoType 启动失败", f"退出码 {exit_code}，详情见托盘菜单与日志")
 
     # ------------------------------------------------------------------
-    # 成功后自动退出（观察窗口；0 = 立即）
+    # 成功后自动退出（观察窗口；0 = 立即；菜单/对话框打开期间暂停）
     # ------------------------------------------------------------------
 
     def _start_auto_exit(self) -> None:
         delay = self._settings.auto_exit_delay_s
         if delay <= 0:
+            if self._exit_pause_count > 0:
+                # 菜单/对话框打开中：挂起立即退出，待全部关闭后补执行
+                logger.info("编排成功，立即退出被挂起（菜单/对话框打开中）")
+                self._exit_pending_immediate = True
+                self._tray.set_progress("✓ 启动完成（菜单/对话框打开中，关闭后退出启动器）")
+                return
             logger.info("编排成功，立即退出（auto_exit_delay_s=0）")
             self._qapp.quit()
             return
         self._auto_exit_remaining = int(delay + 0.999)
+        if self._exit_pause_count > 0:
+            logger.info("编排成功，倒计时已暂停（菜单/对话框打开中）")
+            self._tray.set_progress(
+                f"✓ 启动完成（菜单/对话框打开中，已暂停自动退出，剩余 {self._auto_exit_remaining} 秒）"
+            )
+            return
         self._tray.set_progress(f"✓ 启动完成，{self._auto_exit_remaining} 秒后退出启动器")
         self._auto_exit_timer.start()
 
     def _stop_auto_exit(self) -> None:
         self._auto_exit_timer.stop()
+        self._auto_exit_remaining = 0
+        self._exit_pending_immediate = False
+
+    def _pause_auto_exit(self) -> None:
+        """暂停自动退出（菜单/设置对话框打开；计数支持嵌套）。"""
+        self._exit_pause_count += 1
+        if self._exit_pause_count > 1:
+            return
+        if self._auto_exit_timer.isActive():
+            self._auto_exit_timer.stop()
+            self._tray.set_progress(
+                f"✓ 启动完成（菜单/对话框打开中，已暂停自动退出，剩余 {self._auto_exit_remaining} 秒）"
+            )
+            logger.info("自动退出倒计时已暂停（剩余 {} 秒）", self._auto_exit_remaining)
+        elif self._exit_pending_immediate:
+            self._tray.set_progress("✓ 启动完成（菜单/对话框打开中，关闭后退出启动器）")
+
+    def _resume_auto_exit(self) -> None:
+        """恢复自动退出（菜单/设置对话框关闭；计数归 0 才生效）。"""
+        if self._exit_pause_count <= 0:
+            logger.warning("自动退出恢复计数异常（未处于暂停态），忽略")
+            return
+        self._exit_pause_count -= 1
+        if self._exit_pause_count > 0:
+            return
+        if self._exit_pending_immediate:
+            self._exit_pending_immediate = False
+            logger.info("菜单/对话框已关闭，执行挂起的立即退出")
+            self._qapp.quit()
+            return
+        if self._auto_exit_remaining > 0:
+            logger.info("自动退出倒计时恢复（剩余 {} 秒）", self._auto_exit_remaining)
+            self._tray.set_progress(f"✓ 启动完成，{self._auto_exit_remaining} 秒后退出启动器")
+            self._auto_exit_timer.start()
 
     def _on_auto_exit_tick(self) -> None:
         self._auto_exit_remaining -= 1
@@ -326,9 +379,14 @@ class LauncherTrayApp:
     def _ask_int(self, title: str, label: str, current: float, maximum: int) -> int | None:
         from PySide6.QtWidgets import QInputDialog
 
-        value, ok = QInputDialog.getInt(
-            None, title, label, int(current), 0, maximum, 1
-        )
+        # 模态对话框弹出期间菜单已关闭，须显式暂停自动退出倒计时
+        self._pause_auto_exit()
+        try:
+            value, ok = QInputDialog.getInt(
+                None, title, label, int(current), 0, maximum, 1
+            )
+        finally:
+            self._resume_auto_exit()
         return value if ok else None
 
     def _on_change_service_delay(self) -> None:
@@ -392,12 +450,17 @@ class LauncherTrayApp:
     def _pick_binary(self, title: str) -> str | None:
         from PySide6.QtWidgets import QFileDialog
 
-        path, _ = QFileDialog.getOpenFileName(
-            None,
-            title,
-            str(Path.home()),
-            "AppImage/可执行文件 (*.AppImage);;全部文件 (*)",
-        )
+        # 模态对话框弹出期间菜单已关闭，须显式暂停自动退出倒计时
+        self._pause_auto_exit()
+        try:
+            path, _ = QFileDialog.getOpenFileName(
+                None,
+                title,
+                str(Path.home()),
+                "AppImage/可执行文件 (*.AppImage);;全部文件 (*)",
+            )
+        finally:
+            self._resume_auto_exit()
         if not path:
             return None
         candidate = Path(path)
