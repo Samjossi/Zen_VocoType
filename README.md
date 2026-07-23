@@ -61,8 +61,8 @@ hicolor 四档图标 `~/.local/share/icons/hicolor/<32,64,128,256>x*/apps/zen-vo
   2026-07-23 实机事故，详见 `work plans/2026-07-23-17_systemd自启动下启动器托盘失效诊断报告.md`
 - 若曾手工配置 systemd 自启动服务，先 `systemctl --user disable --now <单元>`
   再装本条目（防双启动）
-- 预期效果：登录后 Launcher 托盘**短暂出现**（编排成功按 `auto_exit_delay_s`
-  自退），常驻托盘为 Service/Client 图标；成功路径**无桌面通知**
+- 预期效果：登录后 Launcher 托盘**短暂出现**（编排成功按 `exit_after_success_s`
+  自退，默认 60 秒），常驻托盘为 Service/Client 图标；成功路径**无桌面通知**
 - 移动/改名 AppImage 后需重跑安装脚本（条目 Exec 按安装时路径渲染）
 
 ### 数据与配置位置（XDG 分层，AppImage 只读挂载零写入）

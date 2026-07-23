@@ -29,20 +29,23 @@ class TestDelayFields:
         s = Settings()
         assert s.service_start_delay_s == 0.0
         assert s.client_start_interval_s == 0.0
-        assert s.auto_exit_delay_s == 8.0
+        assert s.exit_after_success_s == 60.0
+        # T44：旧字段已拆除（防回退固化）
+        assert not hasattr(s, "auto_exit_delay_s")
 
-    @pytest.mark.parametrize("value", [0, 1, 3.9])
-    def test_auto_exit_below_min_rejected(self, value):
-        """下限 4 秒（2026-07-23 实机事故：误设 0 → 幂等秒退「无托盘」错觉）。"""
+    @pytest.mark.parametrize("value", [0, 8, 29.9])
+    def test_exit_after_success_below_min_rejected(self, value):
+        """下限 30 秒（8 = 旧 auto_exit_delay_s 默认值，🔴 防旧配置残留语义漂移）。"""
         with pytest.raises(ValidationError):
-            Settings(auto_exit_delay_s=value)
+            Settings(exit_after_success_s=value)
 
-    def test_auto_exit_min_boundary_accepted(self):
-        assert Settings(auto_exit_delay_s=4).auto_exit_delay_s == 4.0
+    def test_exit_after_success_boundaries_accepted(self):
+        assert Settings(exit_after_success_s=30).exit_after_success_s == 30.0
+        assert Settings(exit_after_success_s=300).exit_after_success_s == 300.0
 
     @pytest.mark.parametrize(
         "field",
-        ["service_start_delay_s", "client_start_interval_s", "auto_exit_delay_s"],
+        ["service_start_delay_s", "client_start_interval_s", "exit_after_success_s"],
     )
     def test_negative_rejected(self, field):
         with pytest.raises(ValidationError):
@@ -54,9 +57,9 @@ class TestDelayFields:
         with pytest.raises(ValidationError):
             Settings(client_start_interval_s=301)
 
-    def test_auto_exit_over_limit_rejected(self):
+    def test_exit_after_success_over_limit_rejected(self):
         with pytest.raises(ValidationError):
-            Settings(auto_exit_delay_s=61)
+            Settings(exit_after_success_s=300.1)
 
     def test_launch_plan_delay_defaults_zero(self):
         plan = LaunchPlan(
@@ -67,6 +70,20 @@ class TestDelayFields:
         )
         assert plan.service_delay_s == 0.0
         assert plan.client_interval_s == 0.0
+
+
+class TestLegacyKeyMigration:
+    def test_legacy_auto_exit_key_silently_ignored(self, tmp_path):
+        """T44 迁移：用户配置旧键 ``auto_exit_delay_s`` 自动忽略（契约库用户
+        配置源只拾取已声明字段）——🔴 实机迁移路径固化。
+
+        路径与 conftest 冻结的 ``DEFAULT_USER_CONFIG_PATH`` 一致。
+        """
+        cfg = tmp_path / "zen_vocotype" / "user_config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("auto_exit_delay_s: 8\n", encoding="utf-8")
+        s = Settings()
+        assert s.exit_after_success_s == 60.0
 
 
 # ---------------------------------------------------------------------- build_plan 双延迟携带

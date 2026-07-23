@@ -30,7 +30,7 @@ CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 #: 🔴 与 Client T33/T35 同模式，禁止散落硬编码）
 SERVICE_START_DELAY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_SERVICE_START_DELAY_S"
 CLIENT_START_INTERVAL_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_CLIENT_START_INTERVAL_S"
-AUTO_EXIT_DELAY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_AUTO_EXIT_DELAY_S"
+EXIT_AFTER_SUCCESS_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_EXIT_AFTER_SUCCESS_S"
 SERVICE_BINARY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_SERVICE_BINARY"
 CLIENT_BINARY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_CLIENT_BINARY"
 
@@ -81,13 +81,15 @@ class Settings(ComponentSettings):
     #: 保留为两端拉起后的整体成败判定，🔴 间隔不替代就绪判定
     client_start_interval_s: float = Field(default=0.0, ge=0, le=300)
 
-    #: 成功后自动退出延迟（秒，T40 托盘模式专属）：编排成功后托盘的观察
-    #: 停留窗口；🔴 失败路径不自动退出（防静默失败）。
-    #: 默认 8 秒、下限 4 秒（2026-07-23 实机事故：误设 0 → 幂等命中时进程
-    #: 1~2 秒即退，GNOME 托盘图标异步注册未完成，图标来不及出现造成
-    #: 「无托盘」错觉——下限 4 秒保证图标必然可见）；
+    #: 成功后退出秒数（T44 单一定时器）：编排成功后托盘停留观察窗口，
+    #: 到点无条件退出（🔴 失败路径不启动本定时器——防静默失败红线）。
+    #: 默认 60 秒、下限 30 秒（GNOME SNI 托盘图标异步注册只需 ~4 秒，
+    #: 30 秒下限对「图标必然可见」有 7 倍余量；2026-07-24 拆除菜单暂停
+    #: 机制后，本字段是成功后退出的唯一控制项，取代旧 auto_exit_delay_s
+    #: + 60 秒硬编码兜底的双机制）。设置对话框打开期间倒计时暂停
+    #: （显式 try/finally，不依赖 SNI 菜单事件——该事件在 GNOME 上不可靠）；
     #: CLI（--no-tray）模式无视本字段（CLI 本就跑完即退）
-    auto_exit_delay_s: float = Field(default=8.0, ge=4, le=60)
+    exit_after_success_s: float = Field(default=60.0, ge=30, le=300)
 
     #: 客户端存活确认窗口（秒，T42）：本进程拉起 Client 后的持续存活观察期，
     #: 窗口内死亡判定 CLIENT_FAILED（修复「AppImage 引导数秒后 Qt 崩溃仍报

@@ -1,7 +1,8 @@
-"""T40 单元测试：Launcher 托盘菜单结构 / 设置热切换 / 自动退出 / 回退与探针。
+"""T40/T44 单元测试：Launcher 托盘菜单结构 / 设置热切换 / 成功后退出 / 回退与探针。
 
 QT_QPA_PLATFORM 默认 offscreen（桌面环境不覆盖既有显示）；托盘零业务逻辑——
 编排/持久化行为经 LauncherTrayApp 验证，外部动作全部 monkeypatch。
+T44：成功后退出收敛为单一定时器（菜单开合暂停链路已拆除，防回退用例固化）。
 """
 
 import os
@@ -102,13 +103,13 @@ class TestTrayAppSettings:
             Settings(
                 service_start_delay_s=3,
                 client_start_interval_s=5,
-                auto_exit_delay_s=10,
+                exit_after_success_s=45,
             ),
             __import__("pathlib").Path("launcher.log"),
         )
         assert "3 秒" in app._tray._service_delay_action.text()
         assert "5 秒" in app._tray._client_interval_action.text()
-        assert "10 秒" in app._tray._auto_exit_action.text()
+        assert "45 秒" in app._tray._auto_exit_action.text()
 
     def test_apply_delay_success(self, tray_app, monkeypatch):
         written: list[tuple] = []
@@ -167,14 +168,13 @@ class TestTrayAppSettings:
         assert called == []
         assert tray_app._settings.client_start_interval_s == 0.0
 
-    def test_change_auto_exit_dialog_minimum_four(self, tray_app, monkeypatch):
-        """「成功后自动退出」对话框下限 4 秒（与字段 ge=4 对齐，防误设 0
-        导致幂等秒退「无托盘」错觉——2026-07-23 实机事故）。"""
+    def test_change_auto_exit_dialog_range(self, tray_app, monkeypatch):
+        """「成功后自动退出」对话框范围 30~300（T44，与字段 ge=30/le=300 对齐）。"""
         captured: list[tuple] = []
 
         def fake_get_int(*args, **kwargs):
             captured.append(args)
-            return (8, True)
+            return (45, True)
 
         monkeypatch.setattr(app_mod, "set_user_config_value", lambda k, v: None)
         monkeypatch.setattr(
@@ -182,9 +182,9 @@ class TestTrayAppSettings:
         )
         tray_app._on_change_auto_exit()
         # getInt(parent, title, label, value, min, max, step)
-        assert captured[0][4] == 4
-        assert captured[0][5] == 60
-        assert tray_app._settings.auto_exit_delay_s == 8.0
+        assert captured[0][4] == 30
+        assert captured[0][5] == 300
+        assert tray_app._settings.exit_after_success_s == 45.0
 
 
 class TestBinarySettings:
@@ -223,141 +223,121 @@ class TestBinarySettings:
         assert tray_app._pick_binary("选择") is None
 
 
-# ---------------------------------------------------------------------- 自动退出 / 失败停留
+# ---------------------------------------------------------------------- 成功后退出（T44 单一定时器）
 
 
-class TestAutoExit:
-    def test_success_zero_delay_quits_immediately(self, tray_app, monkeypatch):
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        tray_app._settings.auto_exit_delay_s = 0.0
+class TestExitAfterSuccess:
+    def test_success_starts_countdown(self, tray_app, monkeypatch):
+        """编排成功：定时器激活、剩余秒数取配置值、进度行含秒数。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
         tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert quit_called == [1]
+        assert tray_app._exit_timer.isActive()
+        assert tray_app._exit_remaining == 60
+        assert "60 秒后退出" in tray_app._tray._progress_action.text()
 
-    def test_success_positive_delay_countdown_then_quit(self, tray_app, monkeypatch):
+    def test_countdown_ticks_then_quit(self, tray_app, monkeypatch):
+        """逐秒倒数文本递减；归零 → quit 被调用、定时器停止。"""
         quit_called = []
         monkeypatch.setattr(
             tray_app._qapp, "quit", lambda: quit_called.append(1)
         )
-        tray_app._settings.auto_exit_delay_s = 3.0
+        tray_app._settings.exit_after_success_s = 30.0
         tray_app._on_finished(int(ExitCode.SUCCESS))
         assert quit_called == []  # 倒计时中，未退出
-        assert "3 秒后退出" in tray_app._tray._progress_action.text()
-        tray_app._on_auto_exit_tick()
-        tray_app._on_auto_exit_tick()
+        tray_app._on_exit_tick()
+        assert "29 秒后退出" in tray_app._tray._progress_action.text()
         assert quit_called == []
-        tray_app._on_auto_exit_tick()
+        tray_app._exit_remaining = 1  # 快进至最后一秒
+        tray_app._on_exit_tick()
         assert quit_called == [1]
+        assert not tray_app._exit_timer.isActive()
 
-    def test_failure_stays_no_auto_exit(self, tray_app, monkeypatch):
+    def test_failure_stays_no_exit_timer(self, tray_app, monkeypatch):
+        """🔴 失败路径不启动定时器（防静默失败红线回归）。"""
         quit_called = []
         monkeypatch.setattr(
             tray_app._qapp, "quit", lambda: quit_called.append(1)
         )
         tray_app._on_finished(int(ExitCode.SERVICE_FAILED))
-        assert quit_called == []  # 🔴 失败路径不自动退出
+        assert quit_called == []
         assert "启动失败" in tray_app._tray._progress_action.text()
-        assert not tray_app._auto_exit_timer.isActive()
+        assert not tray_app._exit_timer.isActive()
 
-    def test_retry_cancels_pending_auto_exit(self, tray_app, monkeypatch):
+    def test_retry_cancels_pending_exit(self, tray_app, monkeypatch):
         """重试（立即启动）撤销待定退出倒计时。"""
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        tray_app._settings.auto_exit_delay_s = 5.0
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
         tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert tray_app._auto_exit_timer.isActive()
-        # 模拟重试：_on_start 内 _stop_auto_exit（busy 复位后）
+        assert tray_app._exit_timer.isActive()
+        # 模拟重试：_on_start 内 _stop_exit_countdown（busy 复位后）
         monkeypatch.setattr(tray_app, "_QThread", _FakeThread)
         tray_app._on_start()
-        assert not tray_app._auto_exit_timer.isActive()
+        assert not tray_app._exit_timer.isActive()
+        assert tray_app._exit_remaining == 0
 
-    def test_menu_open_pauses_countdown_resume_continues(self, tray_app, monkeypatch):
-        """菜单打开期间倒计时冻结；关闭后从剩余秒数继续。"""
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        tray_app._settings.auto_exit_delay_s = 5.0
+    def test_dialog_pauses_and_resumes_countdown(self, tray_app, monkeypatch):
+        """设置对话框弹出期间倒计时停走，关闭后从剩余秒数续走（不重置、不漏走）。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        tray_app._settings.exit_after_success_s = 30.0
         tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert tray_app._auto_exit_timer.isActive()
-        # 菜单弹出：计时器停、剩余秒数冻结、文案提示已暂停
-        tray_app._tray.menu_opened.emit()
-        assert not tray_app._auto_exit_timer.isActive()
-        assert tray_app._auto_exit_remaining == 5
-        assert "已暂停" in tray_app._tray._progress_action.text()
-        # 菜单关闭：从剩余 5 秒继续倒计时
-        tray_app._tray.menu_closed.emit()
-        assert tray_app._auto_exit_timer.isActive()
-        assert tray_app._auto_exit_remaining == 5
-        for _ in range(5):
-            tray_app._on_auto_exit_tick()
-        assert quit_called == [1]
-
-    def test_zero_delay_pending_while_menu_open(self, tray_app, monkeypatch):
-        """delay=0 且菜单打开：不立即退出，菜单关闭后补执行。"""
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        tray_app._settings.auto_exit_delay_s = 0.0
-        tray_app._tray.menu_opened.emit()  # 先看菜单，编排随后完成
-        tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert quit_called == []  # 🔴 菜单打开中禁止退出
-        assert tray_app._exit_pending_immediate
-        tray_app._tray.menu_closed.emit()
-        assert quit_called == [1]
-
-    def test_dialog_pauses_countdown(self, tray_app, monkeypatch):
-        """设置对话框弹出期间倒计时冻结（菜单已先关闭的场景）。"""
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        tray_app._settings.auto_exit_delay_s = 4.0
-        tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert tray_app._auto_exit_timer.isActive()
+        assert tray_app._exit_timer.isActive()
 
         observed = {}
 
         def fake_get_int(*a, **k):
             # 对话框弹出期间：计时器必须处于停止态
-            observed["timer_active"] = tray_app._auto_exit_timer.isActive()
-            return (7, True)
+            observed["timer_active"] = tray_app._exit_timer.isActive()
+            return (45, True)
 
         monkeypatch.setattr(
             "PySide6.QtWidgets.QInputDialog.getInt", staticmethod(fake_get_int)
         )
-        value = tray_app._ask_int("标题", "标签", 4.0, 300)
-        assert value == 7
+        value = tray_app._ask_int("标题", "标签", 30.0, 300, 30)
+        assert value == 45
         assert observed["timer_active"] is False
-        assert tray_app._auto_exit_remaining == 4  # 未流逝
-        # 对话框关闭后倒计时恢复
-        assert tray_app._auto_exit_timer.isActive()
+        assert tray_app._exit_timer.isActive()  # 关闭后恢复
+        assert tray_app._exit_remaining == 30  # 未流逝
 
-    def test_nested_pause_only_resumes_at_zero(self, tray_app, monkeypatch):
-        """嵌套暂停（菜单 + 对话框）：计数归零才恢复倒计时。"""
+    def test_pause_resume_guard_when_inactive(self, tray_app):
+        """定时器未激活：pause 返回 False，resume(False) 不启动（防误启动）。"""
+        assert tray_app._pause_exit_timer() is False
+        tray_app._resume_exit_timer(False)
+        assert not tray_app._exit_timer.isActive()
+
+    def test_pause_resume_roundtrip(self, tray_app, monkeypatch):
+        """激活中 pause → 停止且返回 True；resume(True) → 重新激活。"""
         monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
-        tray_app._settings.auto_exit_delay_s = 3.0
         tray_app._on_finished(int(ExitCode.SUCCESS))
-        tray_app._pause_auto_exit()  # 菜单打开
-        tray_app._pause_auto_exit()  # 对话框打开
-        tray_app._resume_auto_exit()  # 对话框关闭——仍有一层暂停
-        assert not tray_app._auto_exit_timer.isActive()
-        tray_app._resume_auto_exit()  # 菜单关闭——归零恢复
-        assert tray_app._auto_exit_timer.isActive()
+        assert tray_app._pause_exit_timer() is True
+        assert not tray_app._exit_timer.isActive()
+        tray_app._resume_exit_timer(True)
+        assert tray_app._exit_timer.isActive()
 
-    def test_resume_without_pause_warns_no_crash(self, tray_app, monkeypatch):
-        """未暂停时的恢复调用：告警且不崩溃（防御性边界）。"""
-        tray_app._resume_auto_exit()
-        assert tray_app._exit_pause_count == 0
+    def test_countdown_value_from_settings(self, qapp, monkeypatch):
+        """配置驱动：exit_after_success_s=30 → 剩余秒数 30。"""
+        app = LauncherTrayApp(
+            Settings(exit_after_success_s=30),
+            __import__("pathlib").Path("launcher.log"),
+        )
+        monkeypatch.setattr(app._qapp, "quit", lambda: None)
+        app._on_finished(int(ExitCode.SUCCESS))
+        assert app._exit_remaining == 30
+
+
+class TestMenuSignalsRemoved:
+    def test_menu_open_close_signals_removed(self, qapp):
+        """T44 防回退固化：菜单开合信号已拆除（GNOME SNI 预取假阳性 100%
+        且 closed 永不配对——2026-07-24 诊断：28 暂停 0 恢复，机制性无解）。"""
+        from PySide6.QtCore import SIGNAL
+
+        tray = LauncherTray()
+        assert getattr(tray, "menu_opened", None) is None
+        assert getattr(tray, "menu_closed", None) is None
+        assert tray._menu.receivers(SIGNAL("aboutToShow()")) == 0
+        assert tray._menu.receivers(SIGNAL("aboutToHide()")) == 0
 
 
 class _FakeThread:
-    """QThread 替身：不发线程，同步跳过（仅验证 _stop_auto_exit 接线）。"""
+    """QThread 替身：不发线程，同步跳过（仅验证 _stop_exit_countdown 接线）。"""
 
     def __init__(self, parent=None):
         self.started = _FakeSignal()
@@ -375,7 +355,7 @@ class _FakeSignal:
         pass
 
 
-# ---------------------------------------------------------------------- 状态重检 / 强制退出兜底
+# ---------------------------------------------------------------------- 状态重检
 
 
 def _fake_discovery(monkeypatch, *, service_running=True, client_running=True):
@@ -404,7 +384,7 @@ def _fake_discovery(monkeypatch, *, service_running=True, client_running=True):
     monkeypatch.setattr(app_mod, "discover_component", fake_discover)
 
 
-class TestStatusRecheckAndForceExit:
+class TestStatusRecheck:
     def test_recheck_starts_when_client_not_yet_detected(self, tray_app, monkeypatch):
         """编排完成瞬间客户端锁文件未出现：启动重检轮询，命中后停止并刷新。"""
         monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
@@ -435,48 +415,13 @@ class TestStatusRecheckAndForceExit:
         tray_app._on_finished(int(ExitCode.SUCCESS))
         assert not tray_app._status_recheck_timer.isActive()
 
-    def test_force_exit_started_and_fires(self, tray_app, monkeypatch):
-        """成功后强制退出兜底启动；触发即无条件退出。"""
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        _fake_discovery(monkeypatch)
-        tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert tray_app._force_exit_timer.isActive()
-        tray_app._on_force_exit()
-        assert quit_called == [1]
-
-    def test_force_exit_fires_despite_pause(self, tray_app, monkeypatch):
-        """🔴 菜单/对话框暂停不冻结强制兜底：到点必退。"""
-        quit_called = []
-        monkeypatch.setattr(
-            tray_app._qapp, "quit", lambda: quit_called.append(1)
-        )
-        _fake_discovery(monkeypatch)
-        tray_app._tray.menu_opened.emit()  # 菜单打开（倒计时暂停中）
-        tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert tray_app._exit_pause_count == 1
-        tray_app._on_force_exit()
-        assert quit_called == [1]
-
-    def test_retry_cancels_force_exit(self, tray_app, monkeypatch):
-        """重试（立即启动）撤销强制退出兜底。"""
-        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
-        _fake_discovery(monkeypatch)
-        tray_app._on_finished(int(ExitCode.SUCCESS))
-        assert tray_app._force_exit_timer.isActive()
-        monkeypatch.setattr(tray_app, "_QThread", _FakeThread)
-        tray_app._on_start()
-        assert not tray_app._force_exit_timer.isActive()
-
-    def test_failure_no_recheck_no_force_exit(self, tray_app, monkeypatch):
-        """🔴 失败路径：不启动重检与强制兜底（防静默失败，托盘停留）。"""
+    def test_failure_no_recheck_no_exit_timer(self, tray_app, monkeypatch):
+        """🔴 失败路径：不启动重检与退出定时器（防静默失败，托盘停留）。"""
         monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
         _fake_discovery(monkeypatch, service_running=False, client_running=False)
         tray_app._on_finished(int(ExitCode.SERVICE_FAILED))
         assert not tray_app._status_recheck_timer.isActive()
-        assert not tray_app._force_exit_timer.isActive()
+        assert not tray_app._exit_timer.isActive()
 
 
 # ---------------------------------------------------------------------- 状态检测 / 忙碌守卫
