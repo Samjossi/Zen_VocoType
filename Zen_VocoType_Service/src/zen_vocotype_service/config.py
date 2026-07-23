@@ -76,9 +76,9 @@ class ModelEntry(BaseModel):
 
 #: 内置默认注册表（用户可在 config.yaml 的 models 段覆盖/扩充）
 #: 2026-07-23 移除 paraformer-large/seaco-paraformer（评估记录：work plans/
-#: 2026-07-23-06_旧引擎移除评估记录.md），默认引擎同步迁至 fun-asr-nano
+#: 2026-0723-0623_旧引擎移除评估记录.md），默认引擎同步迁至 fun-asr-nano
 #: 2026-07-23 fun-asr-nano 切换为 GGUF/llama.cpp 运行时（提速修复计划：
-#: work plans/2026-07-23-07_fun-asr-nano提速修复（GGUF集成）实现计划.md）。
+#: work plans/2026-0723-0726_fun-asr-nano提速修复（GGUF集成）实现计划.md）。
 #: PyTorch 版恢复方法（备选）：engine_type 改回 "funasr"，条目替换为
 #: model_id=FunAudioLLM/Fun-ASR-Nano-2512 +
 #: vad_model_id=iic/speech_fsmn_vad_zh-cn-16k-common-pytorch +

@@ -9,7 +9,7 @@
 
 默认引擎 fun-asr-nano（PyTorch 路径）上屏手感慢（RTF 0.29–0.34，比
 paraformer 慢约 10 倍），实测报告
-[`2026-07-23-07_fun-asr-nano速度问题实测报告.md`](2026-07-23-07_fun-asr-nano速度问题实测报告.md)
+[`2026-0723-0726_fun-asr-nano速度问题实测报告.md`](2026-0723-0726_fun-asr-nano速度问题实测报告.md)
 结论：
 
 - 流程无延迟，慢在 PyTorch 推理本身；核显加速硬件上不成立；

@@ -58,7 +58,7 @@ hicolor 四档图标 `~/.local/share/icons/hicolor/<32,64,128,256>x*/apps/zen-vo
   就绪后**执行（DISPLAY 齐备，托盘正常）；卸载时与菜单条目一并删除
 - 🔴 请勿改用 systemd 用户服务做自启动：systemd 服务早于图形会话环境
   注入启动，Launcher 检测不到 DISPLAY 会回退一次性 CLI（托盘全灭）——
-  2026-07-23 实机事故，详见 `work plans/2026-07-23-17_systemd自启动下启动器托盘失效诊断报告.md`
+  2026-07-23 实机事故，详见 `work plans/2026-0723-1705_systemd自启动下启动器托盘失效诊断报告.md`
 - 若曾手工配置 systemd 自启动服务，先 `systemctl --user disable --now <单元>`
   再装本条目（防双启动）
 - 预期效果：登录后 Launcher 托盘**短暂出现**（编排成功按 `exit_after_success_s`
