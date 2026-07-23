@@ -123,32 +123,32 @@ class _FakeNotifier:
 class _FakeTray:
     def __init__(self) -> None:
         self.delay_labels: list[int] = []
-        self.statuses: list = []
 
     def set_restore_delay_label(self, ms: int) -> None:
         self.delay_labels.append(ms)
 
-    def set_status(self, status, detail: str = "") -> None:
-        self.statuses.append((status, detail))
-
 
 class _FakePipeline:
+    """输出管道替身：仅记录延迟 setter 入参（校验红线由真实 OutputPipeline 用例覆盖）。"""
+
     def __init__(self) -> None:
         self.delay: int | None = None
-        self.outputs: list[str] = []
 
     def set_restore_delay_ms(self, ms: int) -> None:
-        if ms < 0:
-            raise ValueError(f"恢复延迟非法：{ms}")
         self.delay = ms
-
-    def output(self, text: str) -> None:
-        self.outputs.append(text)
 
 
 def _make_client(tmp_path, monkeypatch) -> ClientApp:
-    """构造未启动的 ClientApp：替身通知器/托盘/输出管道，用户配置隔离到 tmp。"""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
+    """构造未启动的 ClientApp：替身通知器/托盘/输出管道。
+
+    用户配置路径经 monkeypatch 冻结常量 ``paths.DEFAULT_USER_CONFIG_PATH``
+    真正隔离到 tmp（🔴 monkeypatch XDG_CONFIG_HOME 环境变量无效——该常量
+    在 paths 模块导入期已冻结）。
+    """
+    monkeypatch.setattr(
+        "zen_vocotype_protocol.paths.DEFAULT_USER_CONFIG_PATH",
+        tmp_path / "zen_vocotype" / "user_config.yaml",
+    )
     client = ClientApp(Settings(socket_path="/nonexistent/zen_t35.sock"))
     client._notifier = _FakeNotifier()
     client._tray = _FakeTray()
@@ -228,6 +228,17 @@ class TestApplyRestoreDelay:
         assert client._settings.paste_restore_delay_ms == 300
         assert client._pipeline.delay == 300
 
+    def test_trayless_degradation(self, qapp, tmp_path, monkeypatch):
+        """无托盘降级模式（C4）：_tray=None 时切换照常生效且不抛 AttributeError。"""
+        client = _make_client(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            app_mod, "set_user_config_value", lambda key, value: None
+        )
+        client._tray = None
+        client._apply_restore_delay(300)
+        assert client._settings.paste_restore_delay_ms == 300
+        assert client._pipeline.delay == 300
+
 
 class TestEntryDialog:
     def test_cancel_is_noop(self, qapp, tmp_path, monkeypatch):
@@ -260,3 +271,27 @@ class TestEntryDialog:
         assert seen_prefill == [200]  # Settings 默认值
         assert client._settings.paste_restore_delay_ms == 450
         assert client._pipeline.delay == 450
+
+    def test_out_of_range_current_not_clamped(self, qapp, tmp_path, monkeypatch):
+        """当前值 >10000（手改 YAML 合法持有）→ 上限随当前值抬升，预填不被钳制。
+
+        防「确认即篡改」：上限若硬编码 10000，QSpinBox 会静默钳制预填值，
+        用户直接「确定」即把 20000 改写为 10000 并落盘（评审修复固化）。
+        """
+        client = _make_client(tmp_path, monkeypatch)
+        client._settings.paste_restore_delay_ms = 20000
+        seen: list[tuple[int, int]] = []
+
+        def _fake_get_int(parent, title, label, value, minimum, maximum, step):
+            seen.append((value, maximum))
+            return value, True  # 用户直接「确定」：预填原样返回
+
+        monkeypatch.setattr(
+            QInputDialog, "getInt", staticmethod(_fake_get_int)
+        )
+        monkeypatch.setattr(
+            app_mod, "set_user_config_value", lambda key, value: None
+        )
+        client._on_change_restore_delay()
+        assert seen == [(20000, 20000)]  # 上限抬升至当前值，预填未被钳制
+        assert client._settings.paste_restore_delay_ms == 20000  # 原值不被篡改

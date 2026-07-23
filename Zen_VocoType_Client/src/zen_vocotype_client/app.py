@@ -55,11 +55,13 @@ MSG_HOTKEY_UPDATED = "快捷键已更新为 {}"
 MSG_HOTKEY_INVALID = "快捷键表达式非法：{}"
 MSG_HOTKEY_PERSIST_FAILED = "快捷键配置写入失败：{}——本次修改未生效"
 MSG_HOTKEY_SWITCH_FAILED = "热键监听失效，请重启客户端（{}）"
-MSG_HOTKEY_ENV_OVERRIDE = f"检测到环境变量 {HOTKEY_ENV_VAR}，重启后将以其为准"
+#: 环境变量覆盖提醒文案模板（跨设置项单一出处，🔴 禁止逐设置项复制整句）
+MSG_ENV_OVERRIDE_TEMPLATE = "检测到环境变量 {}，重启后将以其为准"
+MSG_HOTKEY_ENV_OVERRIDE = MSG_ENV_OVERRIDE_TEMPLATE.format(HOTKEY_ENV_VAR)
 MSG_RESTORE_DELAY_INVALID = "恢复延迟数值非法：{}——本次修改未生效"
 MSG_RESTORE_DELAY_PERSIST_FAILED = "恢复延迟配置写入失败：{}——本次修改未生效"
 MSG_RESTORE_DELAY_UPDATED = "剪贴板恢复延迟已更新为 {}ms"
-MSG_RESTORE_DELAY_ENV_OVERRIDE = f"检测到环境变量 {RESTORE_DELAY_ENV_VAR}，重启后将以其为准"
+MSG_RESTORE_DELAY_ENV_OVERRIDE = MSG_ENV_OVERRIDE_TEMPLATE.format(RESTORE_DELAY_ENV_VAR)
 MSG_SAVE_WAV_FAILED = "录音保存失败：{}——识别与粘贴不受影响"
 MSG_SAVE_TXT_FAILED = "识别文本保存失败：{}（录音文件已保留）"
 MSG_SAVE_TOGGLE_PERSIST_FAILED = "录音开关配置写入失败：{}——开关状态未变更"
@@ -81,6 +83,13 @@ def failure_message(code: int, message: str) -> str:
     if code == errors.ERR_BUSY and "model_switching" in message:
         return MSG_MODEL_SWITCHING
     return f"识别失败 [{code}] {message}"
+
+
+def _env_override_suffix(env_var: str) -> str:
+    """环境变量存在时返回覆盖提醒后缀（检测 + 拼接单一出处，跨设置项复用）。"""
+    if os.environ.get(env_var):
+        return f"；{MSG_ENV_OVERRIDE_TEMPLATE.format(env_var)}"
+    return ""
 
 
 class ClientApp(QObject):
@@ -337,8 +346,7 @@ class ClientApp(QObject):
         if self._tray is not None:
             self._tray.set_hotkey_label(expression)
         message = MSG_HOTKEY_UPDATED.format(format_hotkey_display(expression))
-        if os.environ.get(HOTKEY_ENV_VAR):
-            message += f"；{MSG_HOTKEY_ENV_OVERRIDE}"
+        message += _env_override_suffix(HOTKEY_ENV_VAR)
         self._notifier.notify(APP_DISPLAY_NAME, message, key="hotkey-updated")
         logger.info("快捷键热切换完成：{}", expression)
 
@@ -365,6 +373,8 @@ class ClientApp(QObject):
         """
         from PySide6.QtWidgets import QInputDialog  # 局部 import：仅此处需要
 
+        # 上限与当前值取大：🔴 防当前值经 YAML/环境变量合法持有 >10000 时
+        # QSpinBox 将预填静默钳制，用户直接「确定」即被改写落盘（评审修复）
         value, ok = QInputDialog.getInt(
             None,
             "剪贴板恢复延迟",
@@ -372,7 +382,7 @@ class ClientApp(QObject):
             "个别应用粘贴出旧内容时可调大（如 300~500）",
             self._settings.paste_restore_delay_ms,
             0,
-            10000,
+            max(10000, self._settings.paste_restore_delay_ms),
             50,
         )
         if ok:
@@ -410,8 +420,7 @@ class ClientApp(QObject):
         if self._tray is not None:
             self._tray.set_restore_delay_label(value)
         message = MSG_RESTORE_DELAY_UPDATED.format(value)
-        if os.environ.get(RESTORE_DELAY_ENV_VAR):
-            message += f"；{MSG_RESTORE_DELAY_ENV_OVERRIDE}"
+        message += _env_override_suffix(RESTORE_DELAY_ENV_VAR)
         self._notifier.notify(APP_DISPLAY_NAME, message, key="restore-delay-updated")
         logger.info("恢复延迟热切换完成：{}ms", value)
 
