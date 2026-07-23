@@ -44,14 +44,14 @@ class Settings(ComponentSettings):
     socket_path: str = DEFAULT_SOCKET_PATH
 
     #: 全局热键（pynput 组合键表达式，按住说话、松开识别）；启动时经 pynput 解析校验。
-    #: 默认 <ctrl>+<alt>+o；
+    #: 默认 <ctrl>+<alt>+y；
     #: 🔴 与旧版 GridChat <ctrl>+` 及本机已占用的 <ctrl>+<alt>+v / <ctrl>+<alt>+t 明确区分
-    hotkey: str = "<ctrl>+<alt>+o"
+    hotkey: str = "<ctrl>+<alt>+y"
 
     #: 剪贴板恢复延迟（毫秒）：粘贴发出后恢复原剪贴板的保守延迟。
-    #: 依据：覆盖主流应用粘贴读取的 P99 经验值（沿用旧版 500ms 数值但去除裸 sleep 性质，
-    #: 恢复前须校验剪贴板指纹——选型八）。命名常量 + 可配置（C2）。
-    paste_restore_delay_ms: int = Field(default=500, ge=0)
+    #: 依据：默认 200ms（缩短剪贴板被占用窗口；恢复前有剪贴板指纹校验兜底——选型八，
+    #: 个别应用读取偏慢导致粘贴到旧内容时可调大）。命名常量 + 可配置（C2）。
+    paste_restore_delay_ms: int = Field(default=200, ge=0)
 
     #: 最大录音时长（秒）。依据：对齐协议体上限 MAX_BODY_BYTES（约 10 分钟 PCM）留足余量；
     #: 到达上限自动停止并进入识别流程 + 通知（选型四）
