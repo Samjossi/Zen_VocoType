@@ -137,7 +137,7 @@ def main() -> int:
     if args.models_dir is not None:
         env["ZEN_VOCOTYPE_SERVICE_MODELS_DIR"] = str(args.models_dir.resolve())
 
-    form = "AppImage" if binary.suffix == ".AppImage" else "onedir"
+    form = "AppImage" if binary.suffix.lower() == ".appimage" else "onedir"
     print(f"[e2e] 形态={form} 二进制={binary.name}", flush=True)
 
     t0 = time.monotonic()

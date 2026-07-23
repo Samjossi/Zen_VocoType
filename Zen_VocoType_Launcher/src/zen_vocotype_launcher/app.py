@@ -457,7 +457,7 @@ class LauncherTrayApp:
                 None,
                 title,
                 str(Path.home()),
-                "AppImage/可执行文件 (*.AppImage);;全部文件 (*)",
+                "AppImage/可执行文件 (*.AppImage *.appimage);;全部文件 (*)",
             )
         finally:
             self._resume_auto_exit()
