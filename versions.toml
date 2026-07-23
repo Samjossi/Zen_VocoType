@@ -10,7 +10,7 @@
 spec = "major.minor"
 
 [components]
-client   = "1.0"
-launcher = "1.0"
-protocol = "1.0"
-service  = "1.0"
+client   = "1.1"
+launcher = "1.1"
+protocol = "1.1"
+service  = "1.1"
