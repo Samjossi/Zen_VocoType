@@ -17,6 +17,7 @@ Socket，先拉起无害）；就绪等待保留但后移为「两端拉起后�
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -96,6 +97,12 @@ def _status(deps: OrchestratorDeps, text: str) -> None:
     """状态回调桥接（T40 托盘进度行；未注入时零开销）。"""
     if deps.status_callback is not None:
         deps.status_callback(text)
+
+
+#: Client 存活确认轮询间隔（秒，T42）。依据：进程死亡为毫秒~秒级事件，
+#: 0.2s 轮询兼顾失败检出速度与时钟开销；轮次制循环（非 wall-clock）——
+#: 经 ``deps.sleep`` 注入，测试零真实等待
+_SETTLE_POLL_S: float = 0.2
 
 
 def _countdown(deps: OrchestratorDeps, seconds: float, label: str) -> None:
@@ -203,6 +210,9 @@ def run(
                 _countdown(deps, plan.client_interval_s, "启动客户端")
 
             # -------------------------------------------------- Client 拉起
+            # T42：初始化为 None——既有实例路径保持 None（跳过存活确认，
+            # 🔴 幂等路径零附加等待）
+            client_proc = None
             if not client_running:
                 _status(deps, "正在启动客户端…")
                 try:
@@ -257,6 +267,27 @@ def run(
                 if service_owned:
                     return ExitCode.SERVICE_FAILED  # ExitStack 逆序回收
                 return ExitCode.ALREADY_RUNNING  # 既有实例异常，Launcher 无权终止
+
+            # ----------------------------- Client 存活确认（T42）
+            # 仅本进程拉起的 Client：AppImage FUSE 引导 + Python 启动需数秒，
+            # 拉起瞬间存活不代表引导后存活（2026-07-23 systemd 无显示环境
+            # 实机事故：Client 引导完成后 Qt 硬崩，就绪等待只探 Service，
+            # 「启动完成」误报）。窗口内持续存活才放行 notify_done；
+            # 就绪等待耗时常远超窗口（冷启动首轮即终检，零附加等待），
+            # 只有「Client 新拉起 + Service 秒就绪」组合才实际补等——
+            # 而那正是需要观察的场景
+            if client_proc is not None and settings.client_settle_timeout_s > 0:
+                steps = math.ceil(settings.client_settle_timeout_s / _SETTLE_POLL_S)
+                for _ in range(steps):
+                    if not client_proc.is_alive():
+                        detail = _exit_info(client_proc, plan.client.log_path)
+                        logger.error("客户端拉起后存活确认期内死亡：{}", detail)
+                        _status(deps, f"客户端存活确认失败：{detail}")
+                        notifier.notify_failed(
+                            f"客户端拉起后退出（{detail}）", str(deps.log_file)
+                        )
+                        return ExitCode.CLIENT_FAILED  # ExitStack 回收 service（若 owned）
+                    deps.sleep(_SETTLE_POLL_S)
 
             # -------------------------------------------------- 完成
             elapsed = time.monotonic() - started

@@ -47,6 +47,24 @@ Launcher 查找顺序：同目录 AppImage → 同目录 onedir 目录 → 配�
 安装内容：`~/.local/share/applications/zen-vocotype.desktop` +
 hicolor 四档图标 `~/.local/share/icons/hicolor/<32,64,128,256>x*/apps/zen-vocotype.png`。
 
+### 开机自启动（T43，GNOME autostart）
+
+```bash
+# 安装桌面入口的同时安装自启动条目（幂等）
+.venv/bin/python tools/install_desktop.py --dir <AppImage 摆放目录> --autostart
+```
+
+- 条目写入 `~/.config/autostart/zen-vocotype.desktop`，桌面环境在**图形会话
+  就绪后**执行（DISPLAY 齐备，托盘正常）；卸载时与菜单条目一并删除
+- 🔴 请勿改用 systemd 用户服务做自启动：systemd 服务早于图形会话环境
+  注入启动，Launcher 检测不到 DISPLAY 会回退一次性 CLI（托盘全灭）——
+  2026-07-23 实机事故，详见 `work plans/2026-07-23-17_systemd自启动下启动器托盘失效诊断报告.md`
+- 若曾手工配置 systemd 自启动服务，先 `systemctl --user disable --now <单元>`
+  再装本条目（防双启动）
+- 预期效果：登录后 Launcher 托盘**短暂出现**（编排成功按 `auto_exit_delay_s`
+  自退），常驻托盘为 Service/Client 图标；成功路径**无桌面通知**
+- 移动/改名 AppImage 后需重跑安装脚本（条目 Exec 按安装时路径渲染）
+
 ### 数据与配置位置（XDG 分层，AppImage 只读挂载零写入）
 
 | 类别 | 默认位置 | 说明 |

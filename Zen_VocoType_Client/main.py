@@ -8,11 +8,19 @@
 - ``python main.py --version``          打印版本并退出（构建冒烟探针）
 
 退出码：0 正常退出；2 配置校验失败；3 录音设备不可用；4 热键后端启动失败；
-5 已有客户端实例运行（单实例锁冲突）。
+5 已有客户端实例运行（单实例锁冲突）；6 无显示环境（headless，T41）。
 """
 
+import os
 import sys
 from pathlib import Path
+
+
+def display_available() -> bool:
+    """显示环境探测（🔴 QApplication 创建前必须先探测：headless 下 Qt 会
+    SIGABRT 硬崩而非抛 Python 异常，无法经 try 捕获降级——与 Service/Launcher
+    同款防御，T41 补齐三组件对齐；2026-07-23 systemd 无显示环境实机事故）。"""
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def main() -> int:
@@ -39,6 +47,22 @@ def main() -> int:
         logger.error("配置校验失败：{}", exc)
         return 2
     setup_logging(settings.log_dir)
+
+    # 显示环境探测（T41）：须在 validate_startup 与 Qt 之前——validate_startup
+    # 经 hotkey.combo 间接 import pynput，pynput 在 import 期即连 X（headless
+    # 下 ImportError），Qt 更是 SIGABRT 硬崩（非 Python 异常，无法捕获降级）；
+    # headless 属确定性环境错误，早失败不触锁、不触 Qt/pynput。
+    # --screenshot 分支亦在其后：selftest 第 1 步即在当前桌面会话启动真实
+    # 托盘，本身就需要显示环境，探测不构成误伤
+    if not display_available():
+        from loguru import logger
+
+        logger.error(
+            "无显示环境（DISPLAY/WAYLAND_DISPLAY 均未设置），客户端无法运行："
+            "托盘/热键/粘贴均依赖图形会话。请在已登录的桌面会话内启动；"
+            "headless 部署请仅运行服务端"
+        )
+        return 6
 
     try:
         validate_startup(settings)

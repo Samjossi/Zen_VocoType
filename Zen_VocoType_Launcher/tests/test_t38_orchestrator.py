@@ -119,6 +119,8 @@ class FakeDeps:
             notifier=outer.notifier,
             lock_factory=lock_factory,
             log_file=Path("launcher.log"),
+            # T42 存活确认循环经 deps.sleep：注入 fake 防真实等待拖慢测试
+            sleep=lambda seconds: None,
         )
 
 

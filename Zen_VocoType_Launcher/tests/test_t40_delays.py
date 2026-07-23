@@ -186,15 +186,25 @@ def _deps_with_events(events: list) -> OrchestratorDeps:
 
 class TestOrchestrationDelays:
     def test_zero_delays_no_sleep(self):
+        # T42：本文件聚焦倒计时语义，关闭存活确认窗口防 settle 轮询
+        # sleep 污染事件流（存活确认由 test_t42_client_settle.py 覆盖）
         events: list = []
-        code = run(_plan(), Settings(), "/x.lock", deps=_deps_with_events(events))
+        code = run(
+            _plan(),
+            Settings(client_settle_timeout_s=0),
+            "/x.lock",
+            deps=_deps_with_events(events),
+        )
         assert code == ExitCode.SUCCESS
         assert not [e for e in events if e[0] == "sleep"]
 
     def test_service_delay_before_service_spawn(self):
         events: list = []
         code = run(
-            _plan(service_delay=3.0), Settings(), "/x.lock", deps=_deps_with_events(events)
+            _plan(service_delay=3.0),
+            Settings(client_settle_timeout_s=0),  # T42：关闭存活确认（见上）
+            "/x.lock",
+            deps=_deps_with_events(events),
         )
         assert code == ExitCode.SUCCESS
         sleeps = [e for e in events if e[0] == "sleep"]
@@ -206,7 +216,10 @@ class TestOrchestrationDelays:
     def test_client_interval_between_spawns(self):
         events: list = []
         code = run(
-            _plan(client_interval=5.0), Settings(), "/x.lock", deps=_deps_with_events(events)
+            _plan(client_interval=5.0),
+            Settings(client_settle_timeout_s=0),  # T42：关闭存活确认（见上）
+            "/x.lock",
+            deps=_deps_with_events(events),
         )
         assert code == ExitCode.SUCCESS
         sleeps = [e for e in events if e[0] == "sleep"]

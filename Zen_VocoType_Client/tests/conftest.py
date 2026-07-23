@@ -1,0 +1,18 @@
+"""Client 测试公共夹具。"""
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path, monkeypatch):
+    """隔离宿主用户配置：实机 ``user_config.yaml`` 的设置项会经契约库
+    用户配置层渗入 ``Settings()``，污染默认值断言（2026-07-23 实机：
+    用户经 T36 将 hotkey 落盘为 ``<ctrl>+` ``，test_t21 默认值断言即被
+    污染——Launcher 侧同款隔离见 commit 699d54f，本文件为 Client 补齐；
+    常量于 paths 模块导入期冻结，monkeypatch XDG_CONFIG_HOME 环境变量
+    无效，须冻结常量本体）。
+    """
+    monkeypatch.setattr(
+        "zen_vocotype_protocol.paths.DEFAULT_USER_CONFIG_PATH",
+        tmp_path / "zen_vocotype" / "user_config.yaml",
+    )

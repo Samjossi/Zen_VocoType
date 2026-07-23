@@ -88,3 +88,13 @@ class Settings(ComponentSettings):
     #: 「无托盘」错觉——下限 4 秒保证图标必然可见）；
     #: CLI（--no-tray）模式无视本字段（CLI 本就跑完即退）
     auto_exit_delay_s: float = Field(default=8.0, ge=4, le=60)
+
+    #: 客户端存活确认窗口（秒，T42）：本进程拉起 Client 后的持续存活观察期，
+    #: 窗口内死亡判定 CLIENT_FAILED（修复「AppImage 引导数秒后 Qt 崩溃仍报
+    #: 启动完成」误报——2026-07-23 systemd 无显示环境实机事故，Client 引导
+    #: 完成后 Qt 硬崩，拉起瞬间的存活检查覆盖不到）。
+    #: 默认 10 秒：FUSE 挂载 + Python 引导 + Qt 初始化实测数秒内完成，引导期
+    #: 崩溃必落在窗口内；0 = 关闭（回退 T42 前行为，仅拉起瞬间检查一次）。
+    #: 🔴 既有实例幂等命中不适用本窗口（幂等路径零附加等待——15:10 报告
+    #: 性能红线）；冷启动就绪等待常远超窗口，同样零附加等待
+    client_settle_timeout_s: float = Field(default=10.0, ge=0, le=120)

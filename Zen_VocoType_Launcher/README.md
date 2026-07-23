@@ -102,6 +102,7 @@ Client 位置：未设置（自动）… / 恢复 Client 自动解析
 | `service_start_delay_s` | 0 | T40：Launcher 启动后多少秒拉起服务端（0~300；托盘菜单可设） |
 | `client_start_interval_s` | 0 | T40：服务端拉起后隔多少秒拉起客户端（0~300；托盘菜单可设） |
 | `auto_exit_delay_s` | 8 | T40：编排成功后托盘观察窗口秒数（4~60；仅托盘模式有效；🔴 失败路径不自动退出；下限 4 秒——过短会让进程在 GNOME 托盘图标异步注册完成前退出，造成「无托盘」错觉） |
+| `client_settle_timeout_s` | 10 | T42：本进程拉起客户端后的存活确认窗口秒数（0~120，0=关闭）；窗口内进程死亡判定退出码 4（修复「AppImage 引导数秒后崩溃仍报启动完成」误报）；🔴 既有实例幂等命中不适用（零附加等待） |
 | `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | 日志目录（阶段 4 T4.1 迁 XDG） |
 
 ## 目标解析（正式模式）
@@ -157,6 +158,7 @@ onedir 与 AppImage 双形态经 `tools/build.py --component launcher [--appimag
 | 托盘状态行「✗ 目标解析失败」 | 组件二进制不在邻接目录：经菜单「Service/Client 位置…」选择二进制（持久化），或把三个 AppImage 放回同一目录 |
 | 通知「已在运行」退出码 2 | 已有实例运行；确认托盘可用即无需再启动。实例异常时：`kill <锁文件内 PID>` 后重试（锁文件在 `$XDG_RUNTIME_DIR` 或 `~/.local/run`） |
 | 退出码 3 且日志显示模型下载中 | 首次使用需下载模型（数百 MB），属正常；超时可调大 `model_ready_timeout_s` |
+| 退出码 4「客户端拉起后退出」 | 客户端在存活确认窗口（`client_settle_timeout_s`，默认 10 秒）内死亡：典型为无显示环境下 Qt 崩溃——查 `child_client.log` 尾部确认（T42 前此场景误报「启动完成」） |
 | 拉起后很快识别报「服务端未就绪」 | 模型仍在加载：调大 `client_start_interval_s`（如 10~20 秒），或在 Client 托盘「重试连接服务端」 |
 | 托盘「拉起来就消失」 | 非崩溃：`auto_exit_delay_s` 观察窗口结束自动退出（默认 8 秒）；失败时托盘会停留，对比可感知。两端已在运行时编排幂等秒完，窗口从成功时刻起算 |
 | 退出码 5「Socket 被外部占用」 | Socket 路径被非本组件进程占用；🔴 Launcher 不会 unlink 他人 Socket，请配置 `socket_path` 换路径 |
