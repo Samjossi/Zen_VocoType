@@ -29,7 +29,16 @@ class TestDelayFields:
         s = Settings()
         assert s.service_start_delay_s == 0.0
         assert s.client_start_interval_s == 0.0
-        assert s.auto_exit_delay_s == 5.0
+        assert s.auto_exit_delay_s == 8.0
+
+    @pytest.mark.parametrize("value", [0, 1, 3.9])
+    def test_auto_exit_below_min_rejected(self, value):
+        """下限 4 秒（2026-07-23 实机事故：误设 0 → 幂等秒退「无托盘」错觉）。"""
+        with pytest.raises(ValidationError):
+            Settings(auto_exit_delay_s=value)
+
+    def test_auto_exit_min_boundary_accepted(self):
+        assert Settings(auto_exit_delay_s=4).auto_exit_delay_s == 4.0
 
     @pytest.mark.parametrize(
         "field",

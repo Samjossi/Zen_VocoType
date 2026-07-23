@@ -167,6 +167,25 @@ class TestTrayAppSettings:
         assert called == []
         assert tray_app._settings.client_start_interval_s == 0.0
 
+    def test_change_auto_exit_dialog_minimum_four(self, tray_app, monkeypatch):
+        """「成功后自动退出」对话框下限 4 秒（与字段 ge=4 对齐，防误设 0
+        导致幂等秒退「无托盘」错觉——2026-07-23 实机事故）。"""
+        captured: list[tuple] = []
+
+        def fake_get_int(*args, **kwargs):
+            captured.append(args)
+            return (8, True)
+
+        monkeypatch.setattr(app_mod, "set_user_config_value", lambda k, v: None)
+        monkeypatch.setattr(
+            "PySide6.QtWidgets.QInputDialog.getInt", staticmethod(fake_get_int)
+        )
+        tray_app._on_change_auto_exit()
+        # getInt(parent, title, label, value, min, max, step)
+        assert captured[0][4] == 4
+        assert captured[0][5] == 60
+        assert tray_app._settings.auto_exit_delay_s == 8.0
+
 
 class TestBinarySettings:
     def test_apply_binary_set_and_reset(self, tray_app, monkeypatch, tmp_path):

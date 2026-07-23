@@ -82,6 +82,9 @@ class Settings(ComponentSettings):
     client_start_interval_s: float = Field(default=0.0, ge=0, le=300)
 
     #: 成功后自动退出延迟（秒，T40 托盘模式专属）：编排成功后托盘的观察
-    #: 停留窗口，0 = 立即退出；🔴 失败路径不自动退出（防静默失败）。
+    #: 停留窗口；🔴 失败路径不自动退出（防静默失败）。
+    #: 默认 8 秒、下限 4 秒（2026-07-23 实机事故：误设 0 → 幂等命中时进程
+    #: 1~2 秒即退，GNOME 托盘图标异步注册未完成，图标来不及出现造成
+    #: 「无托盘」错觉——下限 4 秒保证图标必然可见）；
     #: CLI（--no-tray）模式无视本字段（CLI 本就跑完即退）
-    auto_exit_delay_s: float = Field(default=5.0, ge=0, le=60)
+    auto_exit_delay_s: float = Field(default=8.0, ge=4, le=60)

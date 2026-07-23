@@ -4,7 +4,8 @@
 
 - QApplication + LauncherTray 装配；编排经 QThread 执行（🔴 禁止阻塞 Qt
   主线程），状态回调经 Qt Signal 桥接回主线程
-- 成功路径：编排完成后经 ``auto_exit_delay_s`` 倒计时自行退出（0 = 立即）；
+- 成功路径：编排完成后经 ``auto_exit_delay_s`` 倒计时自行退出
+  （默认 8 秒，字段约束下限 4 秒）；
   右键菜单 / 设置对话框打开期间倒计时暂停（立即退出亦挂起），关闭后恢复；
   🔴 另有 60 秒强制退出兜底（``_FORCE_EXIT_AFTER_S``），不受暂停影响到点必退；
   编排完成若任一端未检出（客户端 AppImage 锁文件晚出现），启动 2 秒间隔、
@@ -46,8 +47,9 @@ from zen_vocotype_launcher.targets import TargetResolutionError, build_plan
 #: 环境变量覆盖警示文案模板（与 Client T33/T35 同模式）
 MSG_ENV_OVERRIDE_TEMPLATE = "检测到环境变量 {}，重启后将以其为准"
 
-#: 延迟设置项 UI 上限（与字段 le 约束对齐）
+#: 延迟设置项 UI 下限/上限（与字段 ge/le 约束对齐）
 _DELAY_UI_MAX = 300
+_AUTO_EXIT_UI_MIN = 4
 _AUTO_EXIT_UI_MAX = 60
 
 #: 编排成功后状态重检：客户端 AppImage 启动慢（FUSE 挂载 + 引导 + Qt 初始化），
@@ -322,12 +324,14 @@ class LauncherTrayApp:
             self._notify("Zen_VocoType 启动失败", f"退出码 {exit_code}，详情见托盘菜单与日志")
 
     # ------------------------------------------------------------------
-    # 成功后自动退出（观察窗口；0 = 立即；菜单/对话框打开期间暂停）
+    # 成功后自动退出（观察窗口；菜单/对话框打开期间暂停）
     # ------------------------------------------------------------------
 
     def _start_auto_exit(self) -> None:
         delay = self._settings.auto_exit_delay_s
         if delay <= 0:
+            # 防御性分支：字段约束 ge=4 下正常路径不可达（仅直接改写实例
+            # 属性可触达）；保留「0 = 立即退出」语义作底层红线
             if self._exit_pause_count > 0:
                 # 菜单/对话框打开中：挂起立即退出，待全部关闭后补执行
                 logger.info("编排成功，立即退出被挂起（菜单/对话框打开中）")
@@ -451,14 +455,21 @@ class LauncherTrayApp:
         self._notify("设置已更新", f"{label}已更新为 {value} 秒{_env_override_suffix(env_var)}")
         logger.info("{} 已更新：{} 秒（已持久化）", key, value)
 
-    def _ask_int(self, title: str, label: str, current: float, maximum: int) -> int | None:
+    def _ask_int(
+        self,
+        title: str,
+        label: str,
+        current: float,
+        maximum: int,
+        minimum: int = 0,
+    ) -> int | None:
         from PySide6.QtWidgets import QInputDialog
 
         # 模态对话框弹出期间菜单已关闭，须显式暂停自动退出倒计时
         self._pause_auto_exit()
         try:
             value, ok = QInputDialog.getInt(
-                None, title, label, int(current), 0, maximum, 1
+                None, title, label, int(current), minimum, maximum, 1
             )
         finally:
             self._resume_auto_exit()
@@ -492,9 +503,11 @@ class LauncherTrayApp:
     def _on_change_auto_exit(self) -> None:
         value = self._ask_int(
             "成功后自动退出",
-            "编排成功后托盘停留多少秒自动退出（0~60，0 = 立即）：",
+            "编排成功后托盘停留多少秒自动退出（4~60）：\n"
+            "下限 4 秒保证托盘图标必然可见（过短会造成「无托盘」错觉）",
             self._settings.auto_exit_delay_s,
             _AUTO_EXIT_UI_MAX,
+            _AUTO_EXIT_UI_MIN,
         )
         if value is not None:
             self._apply_delay(
