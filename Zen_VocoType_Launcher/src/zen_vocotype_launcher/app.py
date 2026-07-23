@@ -6,6 +6,9 @@
   主线程），状态回调经 Qt Signal 桥接回主线程
 - 成功路径：编排完成后经 ``auto_exit_delay_s`` 倒计时自行退出（0 = 立即）；
   右键菜单 / 设置对话框打开期间倒计时暂停（立即退出亦挂起），关闭后恢复；
+  🔴 另有 60 秒强制退出兜底（``_FORCE_EXIT_AFTER_S``），不受暂停影响到点必退；
+  编排完成若任一端未检出（客户端 AppImage 锁文件晚出现），启动 2 秒间隔、
+  15 秒上限的状态重检轮询，命中即停；
   失败路径：托盘停留（状态行红字错误 + 补救入口），🔴 不自动退出
 - 三个延迟设置 + 组件位置设置：「校验 → 先落盘 → 后切内存 → 刷标签 → 通知」
   （T33/T35 模板；落盘走契约库 ``set_user_config_value``，🔴 禁止写包内
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -45,6 +49,15 @@ MSG_ENV_OVERRIDE_TEMPLATE = "检测到环境变量 {}，重启后将以其为准
 #: 延迟设置项 UI 上限（与字段 le 约束对齐）
 _DELAY_UI_MAX = 300
 _AUTO_EXIT_UI_MAX = 60
+
+#: 编排成功后状态重检：客户端 AppImage 启动慢（FUSE 挂载 + 引导 + Qt 初始化），
+#: 锁文件晚于编排完成数秒才出现——只查一次会把慢启动客户端误显为「未运行」
+_STATUS_RECHECK_INTERVAL_MS = 2000
+_STATUS_RECHECK_MAX_S = 15.0
+
+#: 成功后强制退出兜底（秒）：菜单/对话框暂停只冻结倒计时，不冻结本兜底——
+#: 到达上限无论交互状态如何一律退出（用户约定：60 秒足够改完任何设置）
+_FORCE_EXIT_AFTER_S = 60
 
 
 class TrayUnavailableError(Exception):
@@ -160,6 +173,17 @@ class LauncherTrayApp:
         self._exit_pause_count = 0
         self._exit_pending_immediate = False
 
+        # 编排成功后状态重检轮询（客户端锁文件晚出现的误显修正）
+        self._status_recheck_deadline = 0.0
+        self._status_recheck_timer = QTimer(self._qapp)
+        self._status_recheck_timer.setInterval(_STATUS_RECHECK_INTERVAL_MS)
+        self._status_recheck_timer.timeout.connect(self._on_status_recheck_tick)
+
+        # 成功后强制退出兜底（🔴 不受菜单/对话框暂停影响，到点必退）
+        self._force_exit_timer = QTimer(self._qapp)
+        self._force_exit_timer.setSingleShot(True)
+        self._force_exit_timer.timeout.connect(self._on_force_exit)
+
         self._QThread = QThread
 
     # ------------------------------------------------------------------
@@ -206,8 +230,12 @@ class LauncherTrayApp:
     # 状态检测（两端实例识别；目标解析失败显式可见——痛点一闭环）
     # ------------------------------------------------------------------
 
-    def refresh_status(self) -> None:
-        """检测两端状态并刷新状态行（「重新检测状态」与编排后调用）。"""
+    def refresh_status(self) -> bool:
+        """检测两端状态并刷新状态行（「重新检测状态」与编排后调用）。
+
+        :returns: 两端均为运行中返回 True（重检轮询的提前停止条件）；
+            目标解析失败或任一端未运行返回 False
+        """
         parts = []
         try:
             plan = build_plan(self._settings, dev_mode=False)
@@ -218,7 +246,8 @@ class LauncherTrayApp:
         except TargetResolutionError as exc:
             logger.warning("状态检测：目标解析失败（{}）", exc)
             self._tray.set_status(f"✗ 目标解析失败：{exc}（可经下方「位置…」项设置）")
-            return
+            return False
+        all_running = True
         for name, label, lock_path in (
             ("service", "Service", SERVICE_LOCK_PATH),
             ("client", "Client", CLIENT_LOCK_PATH),
@@ -230,9 +259,12 @@ class LauncherTrayApp:
                 parts.append(f"{label}：●运行中（pid={result.pid}）")
             elif result.status is ComponentStatus.STALE:
                 parts.append(f"{label}：○未运行（已清理陈旧锁）")
+                all_running = False
             else:
                 parts.append(f"{label}：○未运行")
+                all_running = False
         self._tray.set_status("   ".join(parts))
+        return all_running
 
     # ------------------------------------------------------------------
     # 编排（QThread 执行；🔴 禁止阻塞 Qt 主线程）
@@ -245,6 +277,8 @@ class LauncherTrayApp:
         self._busy = True
         self._tray.set_busy(True)
         self._stop_auto_exit()  # 重试时撤销待定退出
+        self._status_recheck_timer.stop()
+        self._force_exit_timer.stop()
         worker = _OrchestrationWorker(
             self._settings,
             self._log_file,
@@ -274,9 +308,14 @@ class LauncherTrayApp:
             self._thread.wait(3000)
             self._thread = None
         self._worker = None
-        self.refresh_status()
+        all_running = self.refresh_status()
         if exit_code == int(ExitCode.SUCCESS):
             self._start_auto_exit()
+            self._start_force_exit()
+            if not all_running:
+                # 客户端 AppImage 启动慢，锁文件晚于编排完成数秒才出现——
+                # 短轮询重检，命中或超时即停（🔴 禁止一次性快照误显未运行）
+                self._start_status_recheck()
         else:
             # 🔴 失败路径不自动退出（防静默失败）：错误态停留 + 通知
             self._tray.set_progress(f"✗ 启动失败（退出码 {exit_code}），可调整后经「立即启动」重试")
@@ -353,6 +392,42 @@ class LauncherTrayApp:
             self._qapp.quit()
         else:
             self._tray.set_progress(f"✓ 启动完成，{self._auto_exit_remaining} 秒后退出启动器")
+
+    # ------------------------------------------------------------------
+    # 编排成功后状态重检（慢启动客户端的锁文件等待；命中/超时即停）
+    # ------------------------------------------------------------------
+
+    def _start_status_recheck(self) -> None:
+        self._status_recheck_deadline = time.monotonic() + _STATUS_RECHECK_MAX_S
+        self._status_recheck_timer.start()
+        logger.info(
+            "状态重检轮询已启动（每 {} ms，上限 {} 秒）",
+            _STATUS_RECHECK_INTERVAL_MS,
+            _STATUS_RECHECK_MAX_S,
+        )
+
+    def _on_status_recheck_tick(self) -> None:
+        if self.refresh_status():
+            self._status_recheck_timer.stop()
+            logger.info("状态重检：两端均已运行，停止轮询")
+        elif time.monotonic() >= self._status_recheck_deadline:
+            self._status_recheck_timer.stop()
+            logger.info("状态重检：已达上限（{} 秒），停止轮询", _STATUS_RECHECK_MAX_S)
+
+    # ------------------------------------------------------------------
+    # 成功后强制退出兜底（🔴 不受菜单/对话框暂停影响，到点必退）
+    # ------------------------------------------------------------------
+
+    def _start_force_exit(self) -> None:
+        self._force_exit_timer.start(_FORCE_EXIT_AFTER_S * 1000)
+        logger.info("强制退出兜底已启动（{} 秒后无条件退出）", _FORCE_EXIT_AFTER_S)
+
+    def _on_force_exit(self) -> None:
+        logger.info(
+            "强制退出兜底触发（{} 秒上限），Launcher 无条件退出（两端不受影响）",
+            _FORCE_EXIT_AFTER_S,
+        )
+        self._qapp.quit()
 
     # ------------------------------------------------------------------
     # 延迟设置项（T33/T35 模板：校验 → 先落盘 → 后切内存 → 刷标签 → 通知）

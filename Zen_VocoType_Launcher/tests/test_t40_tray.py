@@ -356,6 +356,110 @@ class _FakeSignal:
         pass
 
 
+# ---------------------------------------------------------------------- 状态重检 / 强制退出兜底
+
+
+def _fake_discovery(monkeypatch, *, service_running=True, client_running=True):
+    """替身目标解析与实例识别（运行态可按端控制）。"""
+    from zen_vocotype_launcher.discovery import ComponentStatus, DiscoveryResult
+
+    monkeypatch.setattr(
+        app_mod,
+        "build_plan",
+        lambda settings, dev_mode: type(
+            "P",
+            (),
+            {
+                "service": type("T", (), {"expected_exe": "/s"})(),
+                "client": type("T", (), {"expected_exe": "/c"})(),
+            },
+        )(),
+    )
+
+    def fake_discover(lock_path, name, expected_exe=None):
+        running = service_running if name == "service" else client_running
+        if running:
+            return DiscoveryResult(ComponentStatus.RUNNING, pid=4321)
+        return DiscoveryResult(ComponentStatus.ABSENT, detail="无锁文件")
+
+    monkeypatch.setattr(app_mod, "discover_component", fake_discover)
+
+
+class TestStatusRecheckAndForceExit:
+    def test_recheck_starts_when_client_not_yet_detected(self, tray_app, monkeypatch):
+        """编排完成瞬间客户端锁文件未出现：启动重检轮询，命中后停止并刷新。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        _fake_discovery(monkeypatch, client_running=False)
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert "Client：○未运行" in tray_app._tray._status_action.text()
+        assert tray_app._status_recheck_timer.isActive()
+        # 客户端锁文件随后出现（慢启动完成）：下一次重检命中即停
+        _fake_discovery(monkeypatch, client_running=True)
+        tray_app._on_status_recheck_tick()
+        assert not tray_app._status_recheck_timer.isActive()
+        assert "Client：●运行中" in tray_app._tray._status_action.text()
+
+    def test_recheck_stops_at_deadline(self, tray_app, monkeypatch):
+        """重检轮询达上限即停（不无限轮询）。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        _fake_discovery(monkeypatch, client_running=False)
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert tray_app._status_recheck_timer.isActive()
+        tray_app._status_recheck_deadline = 0.0  # 模拟已达上限
+        tray_app._on_status_recheck_tick()
+        assert not tray_app._status_recheck_timer.isActive()
+
+    def test_no_recheck_when_all_running(self, tray_app, monkeypatch):
+        """两端完成即检出：不启动重检轮询。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        _fake_discovery(monkeypatch)
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert not tray_app._status_recheck_timer.isActive()
+
+    def test_force_exit_started_and_fires(self, tray_app, monkeypatch):
+        """成功后强制退出兜底启动；触发即无条件退出。"""
+        quit_called = []
+        monkeypatch.setattr(
+            tray_app._qapp, "quit", lambda: quit_called.append(1)
+        )
+        _fake_discovery(monkeypatch)
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert tray_app._force_exit_timer.isActive()
+        tray_app._on_force_exit()
+        assert quit_called == [1]
+
+    def test_force_exit_fires_despite_pause(self, tray_app, monkeypatch):
+        """🔴 菜单/对话框暂停不冻结强制兜底：到点必退。"""
+        quit_called = []
+        monkeypatch.setattr(
+            tray_app._qapp, "quit", lambda: quit_called.append(1)
+        )
+        _fake_discovery(monkeypatch)
+        tray_app._tray.menu_opened.emit()  # 菜单打开（倒计时暂停中）
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert tray_app._exit_pause_count == 1
+        tray_app._on_force_exit()
+        assert quit_called == [1]
+
+    def test_retry_cancels_force_exit(self, tray_app, monkeypatch):
+        """重试（立即启动）撤销强制退出兜底。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        _fake_discovery(monkeypatch)
+        tray_app._on_finished(int(ExitCode.SUCCESS))
+        assert tray_app._force_exit_timer.isActive()
+        monkeypatch.setattr(tray_app, "_QThread", _FakeThread)
+        tray_app._on_start()
+        assert not tray_app._force_exit_timer.isActive()
+
+    def test_failure_no_recheck_no_force_exit(self, tray_app, monkeypatch):
+        """🔴 失败路径：不启动重检与强制兜底（防静默失败，托盘停留）。"""
+        monkeypatch.setattr(tray_app._qapp, "quit", lambda: None)
+        _fake_discovery(monkeypatch, service_running=False, client_running=False)
+        tray_app._on_finished(int(ExitCode.SERVICE_FAILED))
+        assert not tray_app._status_recheck_timer.isActive()
+        assert not tray_app._force_exit_timer.isActive()
+
+
 # ---------------------------------------------------------------------- 状态检测 / 忙碌守卫
 
 
