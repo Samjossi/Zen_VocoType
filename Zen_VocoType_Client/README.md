@@ -52,6 +52,16 @@
    不支持的按键（媒体键等白名单外按键）会被拒绝并提示
 3. 「确定」即换即用（不重启客户端）；「恢复默认」一键回到 `<ctrl>+<alt>+y`
 
+支持的主键（修饰键 Ctrl/Alt/Shift/Super 之外的非修饰键）：
+
+- 字母 `A`–`Z`、数字 `0`–`9`、功能键 `F1`–`F12`
+- 特殊键：Space、Tab、Backspace、方向键、Insert/Delete/Home/End/PageUp/PageDown
+- 主键区标点（T36，按美式布局键符收录）：`` ` `` `~` `-` `_` `=` `+`
+  `[` `]` `{` `}` `\` `|` `;` `:` `'` `"` `,` `<` `.` `>` `/` `?`
+  - 示例：`` Ctrl+` ``（直接按反引号键）、`Ctrl+Shift+~`（同一物理键加
+    Shift）是**两个不同的快捷键**，以对话框实际回显为准
+- 暂不支持：小键盘区标点（KP_*）、Enter（Esc 为对话框取消键）
+
 - 新快捷键写入用户配置文件 `$XDG_CONFIG_HOME/zen_vocotype/user_config.yaml`
   （优先级高于包内 `config.yaml`），重启后仍然生效；🔴 不会写包内
   `config.yaml`（AppImage 只读挂载点）

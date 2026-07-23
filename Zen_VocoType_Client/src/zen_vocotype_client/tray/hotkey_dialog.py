@@ -78,6 +78,34 @@ def _build_main_key_map() -> dict[int, str]:
             int(Qt.Key.Key_PageDown): "<page_down>",
         }
     )
+    # 主键区标点（含 Shift 移位变体：Qt 按移位后键符上报，
+    # 如 Shift+` → Key_AsciiTilde；pynput 解析与 char 匹配已实证，T36）
+    mapping.update(
+        {
+            int(Qt.Key.Key_QuoteLeft): "`",
+            int(Qt.Key.Key_AsciiTilde): "~",
+            int(Qt.Key.Key_Minus): "-",
+            int(Qt.Key.Key_Underscore): "_",
+            int(Qt.Key.Key_Equal): "=",
+            int(Qt.Key.Key_Plus): "+",
+            int(Qt.Key.Key_BracketLeft): "[",
+            int(Qt.Key.Key_BracketRight): "]",
+            int(Qt.Key.Key_BraceLeft): "{",
+            int(Qt.Key.Key_BraceRight): "}",
+            int(Qt.Key.Key_Backslash): "\\",
+            int(Qt.Key.Key_Bar): "|",
+            int(Qt.Key.Key_Semicolon): ";",
+            int(Qt.Key.Key_Colon): ":",
+            int(Qt.Key.Key_Apostrophe): "'",
+            int(Qt.Key.Key_QuoteDbl): '"',
+            int(Qt.Key.Key_Comma): ",",
+            int(Qt.Key.Key_Less): "<",
+            int(Qt.Key.Key_Period): ".",
+            int(Qt.Key.Key_Greater): ">",
+            int(Qt.Key.Key_Slash): "/",
+            int(Qt.Key.Key_Question): "?",
+        }
+    )
     return mapping
 
 
