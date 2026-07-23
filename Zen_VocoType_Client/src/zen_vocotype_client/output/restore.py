@@ -67,6 +67,15 @@ class OutputPipeline:
         """Qt ``dataChanged`` 信号钩子：内容已被第三方替换（装配层接线）。"""
         self._third_party_changed = True
 
+    def set_restore_delay_ms(self, ms: int) -> None:
+        """运行态更新恢复延迟（托盘设置项热切换用，T35）；仅影响后续 ``output()`` 调度。
+
+        已排程的恢复任务按排程时的旧延迟完成（期望语义，不追溯）。
+        """
+        if ms < 0:
+            raise ValueError(f"恢复延迟非法：{ms}")
+        self._restore_delay_ms = ms
+
     def output(self, text: str) -> None:
         """执行输出时序。
 

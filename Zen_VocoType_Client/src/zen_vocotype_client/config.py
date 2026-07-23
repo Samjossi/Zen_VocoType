@@ -35,6 +35,10 @@ CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 #: 🔴 禁止在其他位置硬编码第二份）
 HOTKEY_ENV_VAR = "ZEN_VOCOTYPE_CLIENT_HOTKEY"
 
+#: paste_restore_delay_ms 字段对应的环境变量名（与 HOTKEY_ENV_VAR 同模式；
+#: app.py 覆盖检测与提示文案共用此常量，🔴 禁止在其他位置硬编码第二份）
+RESTORE_DELAY_ENV_VAR = "ZEN_VOCOTYPE_CLIENT_PASTE_RESTORE_DELAY_MS"
+
 
 class Settings(ComponentSettings):
     """客户端全部配置项的唯一入口。"""

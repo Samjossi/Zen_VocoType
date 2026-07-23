@@ -28,7 +28,7 @@ from zen_vocotype_protocol.paths import (
 )
 from zen_vocotype_protocol.user_config import set_user_config_value
 
-from .config import HOTKEY_ENV_VAR, Settings
+from .config import HOTKEY_ENV_VAR, RESTORE_DELAY_ENV_VAR, Settings
 from .hotkey.combo import format_hotkey_display, parse_hotkey
 from .hotkey.pynput_backend import PynputBackend
 from .output.clipboard import ClipboardError, create_clipboard
@@ -56,6 +56,10 @@ MSG_HOTKEY_INVALID = "快捷键表达式非法：{}"
 MSG_HOTKEY_PERSIST_FAILED = "快捷键配置写入失败：{}——本次修改未生效"
 MSG_HOTKEY_SWITCH_FAILED = "热键监听失效，请重启客户端（{}）"
 MSG_HOTKEY_ENV_OVERRIDE = f"检测到环境变量 {HOTKEY_ENV_VAR}，重启后将以其为准"
+MSG_RESTORE_DELAY_INVALID = "恢复延迟数值非法：{}——本次修改未生效"
+MSG_RESTORE_DELAY_PERSIST_FAILED = "恢复延迟配置写入失败：{}——本次修改未生效"
+MSG_RESTORE_DELAY_UPDATED = "剪贴板恢复延迟已更新为 {}ms"
+MSG_RESTORE_DELAY_ENV_OVERRIDE = f"检测到环境变量 {RESTORE_DELAY_ENV_VAR}，重启后将以其为准"
 MSG_SAVE_WAV_FAILED = "录音保存失败：{}——识别与粘贴不受影响"
 MSG_SAVE_TXT_FAILED = "识别文本保存失败：{}（录音文件已保留）"
 MSG_SAVE_TOGGLE_PERSIST_FAILED = "录音开关配置写入失败：{}——开关状态未变更"
@@ -105,10 +109,14 @@ class ClientApp(QObject):
             self._tray: ClientTray | None = ClientTray()
             self._tray.retry_requested.connect(self._on_retry)
             self._tray.hotkey_change_requested.connect(self._on_change_hotkey)
+            self._tray.restore_delay_change_requested.connect(
+                self._on_change_restore_delay
+            )
             self._tray.save_toggled.connect(self._on_toggle_save)
             self._tray.choose_dir_requested.connect(self._on_choose_dir)
             self._tray.open_dir_requested.connect(self._on_open_dir)
             self._tray.set_hotkey_label(settings.hotkey)
+            self._tray.set_restore_delay_label(settings.paste_restore_delay_ms)
             self._tray.set_save_checked(settings.save_recordings)
         else:
             logger.warning("系统托盘不可用，进入无托盘降级模式（C4）")
@@ -345,6 +353,67 @@ class ClientApp(QObject):
             logger.info("快捷键配置已回滚：{}", old_expression)
         except Exception:
             logger.exception("快捷键配置回滚失败（残留新值，下次启动将生效）")
+
+    # ------------------------------------------------------------------ 恢复延迟（主线程，T35）
+
+    def _on_change_restore_delay(self) -> None:
+        """托盘「剪贴板恢复延迟…」入口（主线程）。
+
+        🔴 无忙碌守卫：本参数与状态机/事件流零交互，仅影响 OutputPipeline
+        下一次 output() 的调度参数，录音/识别中修改安全（决策固化于
+        test_t35 忙碌用例）。
+        """
+        from PySide6.QtWidgets import QInputDialog  # 局部 import：仅此处需要
+
+        value, ok = QInputDialog.getInt(
+            None,
+            "剪贴板恢复延迟",
+            "粘贴后恢复原剪贴板内容的延迟（毫秒）：\n"
+            "个别应用粘贴出旧内容时可调大（如 300~500）",
+            self._settings.paste_restore_delay_ms,
+            0,
+            10000,
+            50,
+        )
+        if ok:
+            self._apply_restore_delay(value)
+
+    def _apply_restore_delay(self, value: int) -> None:
+        """校验 → 落盘 → 运行态切换 → 内存/界面同步；失败不生效并通知。
+
+        顺序决策（🔴 先落盘后切换，沿用 T33/T34）：落盘失败整体放弃，
+        运行态延迟不变，避免「运行态已换、重启后丢失」的知行分裂。
+        """
+        # ① 兜底校验（对齐 Settings 字段 ge=0 约束）
+        if value < 0:
+            logger.warning("恢复延迟数值非法，拒绝切换：{}", value)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_RESTORE_DELAY_INVALID.format(value),
+                key="restore-delay-invalid",
+            )
+            return
+        # ② 持久化（用户配置文件层，AppImage 只读挂载下唯一合法落点）
+        try:
+            path = set_user_config_value("paste_restore_delay_ms", value)
+        except Exception as exc:
+            logger.error("恢复延迟配置写入失败：{}", exc)
+            self._notifier.notify(
+                APP_DISPLAY_NAME, MSG_RESTORE_DELAY_PERSIST_FAILED.format(exc),
+                key="restore-delay-persist-failed",
+            )
+            return
+        logger.info("恢复延迟配置已持久化：{} → {}", value, path)
+        # ③ 运行态切换（①已校验，底层红线为双保险）
+        self._pipeline.set_restore_delay_ms(value)
+        # ④ 内存/界面同步 + 成功通知（环境变量优先级高于用户配置文件，如实告知）
+        self._settings.paste_restore_delay_ms = value
+        if self._tray is not None:
+            self._tray.set_restore_delay_label(value)
+        message = MSG_RESTORE_DELAY_UPDATED.format(value)
+        if os.environ.get(RESTORE_DELAY_ENV_VAR):
+            message += f"；{MSG_RESTORE_DELAY_ENV_OVERRIDE}"
+        self._notifier.notify(APP_DISPLAY_NAME, message, key="restore-delay-updated")
+        logger.info("恢复延迟热切换完成：{}ms", value)
 
     # ------------------------------------------------------------------ 录音保存（主线程，T34）
 
