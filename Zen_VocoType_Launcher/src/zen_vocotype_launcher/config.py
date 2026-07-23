@@ -26,6 +26,14 @@ COMPONENT_ROOT: Path = component_root(__file__)
 #: 默认配置文件路径
 CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 
+#: 环境变量名常量（T40 托盘设置项的环境变量覆盖警示用；
+#: 🔴 与 Client T33/T35 同模式，禁止散落硬编码）
+SERVICE_START_DELAY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_SERVICE_START_DELAY_S"
+CLIENT_START_INTERVAL_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_CLIENT_START_INTERVAL_S"
+AUTO_EXIT_DELAY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_AUTO_EXIT_DELAY_S"
+SERVICE_BINARY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_SERVICE_BINARY"
+CLIENT_BINARY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_CLIENT_BINARY"
+
 
 class Settings(ComponentSettings):
     """启动器全部配置项的唯一入口。
@@ -63,3 +71,17 @@ class Settings(ComponentSettings):
     #: 默认 None = 按邻接目录约定自动解析（targets.py）；配置可显式覆盖
     service_binary: str | None = None
     client_binary: str | None = None
+
+    #: 服务端启动延迟（秒）：Launcher 启动后多少秒才拉起服务端（T40）。
+    #: 默认 0 = 立即拉起；倒计时期间托盘进度行按秒刷新（🔴 不做无声等待）
+    service_start_delay_s: float = Field(default=0.0, ge=0, le=300)
+
+    #: 客户端启动间隔（秒）：服务端拉起后隔多少秒再拉起客户端（T40）。
+    #: 客户端拉起门控为固定间隔（Client 懒连接，先拉起无害）；就绪等待
+    #: 保留为两端拉起后的整体成败判定，🔴 间隔不替代就绪判定
+    client_start_interval_s: float = Field(default=0.0, ge=0, le=300)
+
+    #: 成功后自动退出延迟（秒，T40 托盘模式专属）：编排成功后托盘的观察
+    #: 停留窗口，0 = 立即退出；🔴 失败路径不自动退出（防静默失败）。
+    #: CLI（--no-tray）模式无视本字段（CLI 本就跑完即退）
+    auto_exit_delay_s: float = Field(default=5.0, ge=0, le=60)

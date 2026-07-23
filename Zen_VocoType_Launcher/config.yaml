@@ -13,6 +13,11 @@
 # ready_poll_interval_ms: 200    # ready 轮询间隔（毫秒）
 # terminate_grace_seconds: 5     # 进程组终止 SIGTERM→SIGKILL 宽限（秒）
 
-# 正式模式二进制显式路径（默认按邻接目录约定自动解析，一般无需配置）：
+# 正式模式二进制显式路径（默认按邻接目录约定 → ~/AppImages 兜底自动解析，一般无需配置）：
 # service_binary: /自定义/绝对路径/Zen_VocoType_Service.AppImage
 # client_binary: /自定义/绝对路径/Zen_VocoType_Client.AppImage
+
+# T40 启动编排与托盘（托盘菜单可图形化设置，持久化至用户配置文件）：
+# service_start_delay_s: 0    # Launcher 启动后多少秒拉起服务端（0~300）
+# client_start_interval_s: 0  # 服务端拉起后隔多少秒拉起客户端（0~300；模型加载慢的机器建议 10~20）
+# auto_exit_delay_s: 5        # 编排成功后托盘观察窗口秒数（0~60，0=立即退出；仅托盘模式；失败不自动退出）

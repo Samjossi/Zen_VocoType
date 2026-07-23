@@ -81,9 +81,14 @@ class TestTrayMenu:
         assert "GridChat" not in actions[0].text()
 
     def test_version_is_two_part_format(self):
-        """🔴 版本号定版为两位数格式 major.minor（1.0），不再三段式。"""
-        assert SERVICE_VERSION == "1.0"
-        assert len(SERVICE_VERSION.split(".")) == 2
+        """🔴 版本号定版为两位数格式 major.minor（如 1.0/1.1），不再三段式。
+
+        具体版本值的唯一真相为仓库根 versions.toml（一致性由
+        test_version_consistency.py 比对），此处仅固化格式。
+        """
+        import re
+
+        assert re.fullmatch(r"\d+\.\d+", SERVICE_VERSION), SERVICE_VERSION
 
     def test_menu_structure(self, tray):
         texts = _menu_texts(tray)

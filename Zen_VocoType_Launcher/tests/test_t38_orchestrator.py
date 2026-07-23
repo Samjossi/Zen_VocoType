@@ -199,10 +199,12 @@ class TestScenario4ServiceCrash:
         deps.wait_exc = ServiceUnavailableError("服务端进程在等待期间已退出。code=1")
         code = run(_plan(), _settings(), "/x/launcher.lock", deps=deps.build())
         assert code == ExitCode.SERVICE_FAILED
-        # 不误判、回收干净：service 被回收，client 未拉起
+        # 不误判、回收干净：service 被回收；
+        # T40 门控后移——client 在就绪判定前已拉起（懒连接容忍），独立存活不回收
         service = next(p for p in deps.spawned if p.name == "service")
         assert service.terminated
-        assert all(p.name != "client" for p in deps.spawned)
+        client = next(p for p in deps.spawned if p.name == "client")
+        assert not client.terminated
         assert deps.notifier.events[-1][0] == "failed"
 
     def test_ready_timeout(self):
@@ -221,7 +223,10 @@ class TestScenario4ServiceCrash:
         deps.wait_exc = ReadyTimeoutError("阶段二超时")
         code = run(_plan(), _settings(), "/x/launcher.lock", deps=deps.build())
         assert code == ExitCode.ALREADY_RUNNING
-        assert deps.spawned == []  # 既有实例：未拉起、未回收任何东西
+        # 既有 service：未拉起、未回收；
+        # T40 门控后移——client 在就绪判定前拉起（懒连接容忍），独立存活
+        assert [p.name for p in deps.spawned] == ["client"]
+        assert all(not p.terminated for p in deps.spawned)
 
 
 class TestScenario5ClientFailure:

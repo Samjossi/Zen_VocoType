@@ -6,7 +6,8 @@
   两端源码；Socket = 契约库 ``DEV_SOCKET_PATH``（唯一出处）；锁 = dev 锁；
   向子进程注入 Socket 覆盖环境变量（pydantic-settings 环境变量机制）
 - 正式：配置显式路径（``service_binary``/``client_binary``）→ Launcher
-  自身同目录邻接约定（AppImage/onedir）；缺失明确报错
+  自身同目录邻接约定（AppImage/onedir）→ 追加搜索目录兜底（~/AppImages，
+  T40 用户约定）；缺失明确报错
 
 🔴 全部路径基于程序自身位置解析，禁止 cwd 相对解析。
 """
@@ -116,10 +117,19 @@ def _launcher_dir() -> Path:
     return Path(sys.argv[0]).resolve().parent
 
 
+#: 追加搜索目录（T40 用户约定：AppImage 统一存放 ~/AppImages）。
+# 查找顺序：配置显式路径 → 邻接目录约定 → 本目录（兜底）
+FALLBACK_SEARCH_DIRS: tuple[Path, ...] = (Path.home() / "AppImages",)
+
+
 def _resolve_prod_binary(
-    explicit: str | None, *, name: str, sibling_names: tuple[str, ...]
+    explicit: str | None,
+    *,
+    name: str,
+    sibling_names: tuple[str, ...],
+    fallback_names: tuple[str, ...] = (),
 ) -> Path:
-    """正式模式二进制解析：配置显式路径 → 邻接目录约定。"""
+    """正式模式二进制解析：配置显式路径 → 邻接目录约定 → 追加搜索目录兜底。"""
     if explicit is not None:
         path = Path(explicit)
         if not path.is_absolute():
@@ -132,8 +142,16 @@ def _resolve_prod_binary(
         candidate = base / sibling
         if candidate.exists():
             return candidate
+    for directory in FALLBACK_SEARCH_DIRS:
+        for fallback in fallback_names:
+            candidate = directory / fallback
+            if candidate.exists():
+                return candidate
+    searched = f"邻接目录 {base}"
+    if fallback_names:
+        searched += f"，追加目录 {', '.join(str(d) for d in FALLBACK_SEARCH_DIRS)}"
     raise TargetResolutionError(
-        f"未找到 {name} 二进制：配置未显式指定，且邻接目录 {base} 无 {sibling_names}"
+        f"未找到 {name} 二进制：配置未显式指定，且{searched} 无 {sibling_names + fallback_names}"
     )
 
 
@@ -163,6 +181,11 @@ def _build_prod_plan(settings: Settings) -> LaunchPlan:
             "Zen_VocoType_Service.AppImage",
             "zen_vocotype_service/zen_vocotype_service",
         ),
+        # T40 用户约定兜底：~/AppImages 下官方命名与小写命名均可
+        fallback_names=(
+            "Zen_VocoType_Service.AppImage",
+            "zen_vocotype_service.appimage",
+        ),
     )
     client_bin = _resolve_prod_binary(
         settings.client_binary,
@@ -170,6 +193,10 @@ def _build_prod_plan(settings: Settings) -> LaunchPlan:
         sibling_names=(
             "Zen_VocoType_Client.AppImage",
             "zen_vocotype_client/zen_vocotype_client",
+        ),
+        fallback_names=(
+            "Zen_VocoType_Client.AppImage",
+            "zen_vocotype_client.appimage",
         ),
     )
     log_dir = Path(settings.log_dir)
@@ -192,7 +219,14 @@ def _build_prod_plan(settings: Settings) -> LaunchPlan:
 
 
 def build_plan(settings: Settings, *, dev_mode: bool) -> LaunchPlan:
-    """按模式构建编排计划（三处差异替换的唯一入口）。"""
+    """按模式构建编排计划（三处差异替换的唯一入口）。
+
+    T40 双延迟：正式模式从 Settings 读入；dev 模式强制 0（开发编排不引入
+    变量，托盘菜单两项置灰标注「dev 模式固定」）。
+    """
     if dev_mode:
         return _build_dev_plan(settings)
-    return _build_prod_plan(settings)
+    plan = _build_prod_plan(settings)
+    plan.service_delay_s = settings.service_start_delay_s
+    plan.client_interval_s = settings.client_start_interval_s
+    return plan

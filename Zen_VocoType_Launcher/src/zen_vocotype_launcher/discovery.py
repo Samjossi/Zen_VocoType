@@ -113,10 +113,12 @@ def is_pid_running_match(
         if actual_exe is None:
             return False
         exe_match = actual_exe == expected_exe
-        if not exe_match and expected_exe.endswith(".AppImage"):
+        if not exe_match and expected_exe.lower().endswith(".appimage"):
             # AppImage 形态回退（阶段 4 T4.8 实测缺口）：载荷 /proc/exe 指向
             # FUSE 挂载点内路径（随机 .mount_* 前缀），与 .AppImage 路径永不
-            # 相等——以 runtime 注入的 APPIMAGE 环境变量精确比对（等值语义）
+            # 相等——以 runtime 注入的 APPIMAGE 环境变量精确比对（等值语义）。
+            # 后缀判定大小写不敏感（T40 实测：用户重命名 .appimage 小写时
+            # 误判陈旧并误删活锁文件）
             env_path = _appimage_env_of(pid)
             exe_match = env_path is not None and os.path.realpath(
                 env_path

@@ -119,8 +119,52 @@ class TestProdPlan:
 
     def test_missing_everywhere(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", [str(tmp_path / "launcher")])
+        # 兜底目录指向空目录（隔离宿主 ~/AppImages 真实文件）
+        empty = tmp_path / "empty_fallback"
+        empty.mkdir()
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.targets.FALLBACK_SEARCH_DIRS", (empty,)
+        )
         with pytest.raises(TargetResolutionError, match="未找到 service 二进制"):
             build_plan(Settings(), dev_mode=False)
+
+    def test_fallback_dir_resolves(self, tmp_path, monkeypatch):
+        """T40 兜底：邻接缺失时解析 ~/AppImages（官方命名与小写命名均可）。"""
+        adjacency = tmp_path / "adjacency"
+        adjacency.mkdir()
+        fallback = tmp_path / "AppImages"
+        fallback.mkdir()
+        svc = fallback / "zen_vocotype_service.appimage"  # 用户实际小写命名
+        svc.touch()
+        cli = fallback / "Zen_VocoType_Client.AppImage"  # 官方命名
+        cli.touch()
+        monkeypatch.setattr(sys, "argv", [str(adjacency / "launcher")])
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.targets.FALLBACK_SEARCH_DIRS", (fallback,)
+        )
+        plan = build_plan(Settings(), dev_mode=False)
+        assert plan.service.argv == [str(svc)]
+        assert plan.client.argv == [str(cli)]
+
+    def test_adjacency_wins_over_fallback(self, tmp_path, monkeypatch):
+        """邻接优先于兜底目录（查找顺序固化）。"""
+        adjacency = tmp_path / "adjacency"
+        adjacency.mkdir()
+        svc_adj = adjacency / "Zen_VocoType_Service.AppImage"
+        svc_adj.touch()
+        cli_adj = adjacency / "Zen_VocoType_Client.AppImage"
+        cli_adj.touch()
+        fallback = tmp_path / "AppImages"
+        fallback.mkdir()
+        (fallback / "zen_vocotype_service.appimage").touch()
+        (fallback / "zen_vocotype_client.appimage").touch()
+        monkeypatch.setattr(sys, "argv", [str(adjacency / "launcher")])
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.targets.FALLBACK_SEARCH_DIRS", (fallback,)
+        )
+        plan = build_plan(Settings(), dev_mode=False)
+        assert plan.service.argv == [str(svc_adj)]
+        assert plan.client.argv == [str(cli_adj)]
 
     def test_prod_locks_and_socket(self, tmp_path):
         from zen_vocotype_protocol.paths import (

@@ -123,6 +123,22 @@ class TestAppImageExeMatch:
             os.getpid(), expected_exe="/opt/apps/Zen_VocoType_Service.AppImage"
         )
 
+    def test_lowercase_appimage_suffix_env_match(self, monkeypatch):
+        """小写 .appimage 后缀同样走 APPIMAGE 环境变量回退（T40 实测缺口：
+        用户重命名小写后缀时原大小写敏感判定失效，误判陈旧并误删活锁文件）。"""
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._exe_of",
+            lambda pid: "/tmp/.mount_XxYY12/usr/zen_vocotype_service/zen_vocotype_service",
+        )
+        monkeypatch.setattr(
+            "zen_vocotype_launcher.discovery._appimage_env_of",
+            lambda pid: "~/AppImages/zen_vocotype_service.appimage",
+        )
+        assert is_pid_running_match(
+            os.getpid(),
+            expected_exe="~/AppImages/zen_vocotype_service.appimage",
+        )
+
 
 class TestDiscoverComponent:
     def test_absent(self, tmp_path):

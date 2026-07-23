@@ -1,7 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Zen_VocoType_Launcher onedir spec（选型一方案 A；共用模板段见 _common.py）。
 
-Launcher 为零 Qt、零 ML 的纯编排进程，两类重型栈全部排除控制体积。
+T40 修订：Launcher 新增系统托盘（设置/观察窗口），PySide6 移出排除项
+（收编走 PyInstaller 既有 hook，Service spec 已验证）；ML 栈仍全部排除
+控制体积——Launcher 无推理，🔴 ML 排除不变。
 """
 
 import sys
@@ -21,8 +23,8 @@ a = Analysis(
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
-    # Launcher 无 GUI（通知走 notify-send / 桌面服务），Qt 与 ML 栈全部排除
-    excludes=QT_EXCLUDES + ["PySide6"] + ML_EXCLUDES,
+    # T40：托盘依赖 PySide6（不排除）；其余 Qt 绑定与 ML 栈全部排除
+    excludes=QT_EXCLUDES + ML_EXCLUDES,
     noarchive=False,
 )
 pyz = PYZ(a.pure)
