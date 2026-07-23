@@ -12,10 +12,14 @@
 第二道防线，但不替代入口保证。
 """
 
+import subprocess
 import sys
+import uuid
+import wave
+from dataclasses import dataclass
 from pathlib import Path
 
-from zen_vocotype_protocol.paths import DEFAULT_SAMPLE_RATE
+from zen_vocotype_protocol.paths import DEFAULT_RUNTIME_DIR, DEFAULT_SAMPLE_RATE
 
 from zen_vocotype_service.config import COMPONENT_ROOT, ModelEntry
 from zen_vocotype_service.logging_setup import logger
@@ -34,6 +38,28 @@ def _selftest_pcm_path() -> Path:
 
 #: FunASR 推理归一化系数（16bit PCM → float32）
 PCM_NORMALIZE: float = 32768.0
+
+#: funasr-gguf 引擎常量：vendor 二进制（bin/README.md 有版本/SHA256/升级纪律）
+GGUF_CLI_NAME = "llama-funasr-cli"
+#: GGUF 权重文件名/仓库默认约定（注册表条目 extra_params 可覆盖）
+GGUF_DEFAULT_ENCODER = "funasr-encoder-f16.gguf"
+GGUF_DEFAULT_LLM = "qwen3-0.6b-q8_0.gguf"
+GGUF_DEFAULT_VAD_REPO = "FunAudioLLM/fsmn-vad-GGUF"
+GGUF_DEFAULT_VAD = "fsmn-vad.gguf"
+#: GGUF 子进程超时（秒）：worker 提交侧 infer_timeout_s 只解除调用方等待，
+#: 子进程自身必须兜底防挂死卡占 worker 线程；GGUF 实测 RTF≈0.08 下
+#: 10 分钟录音（协议上限）约 48s，本值留 >5 倍余量
+GGUF_SUBPROCESS_TIMEOUT_S = 300.0
+
+
+@dataclass(frozen=True)
+class GgufRuntime:
+    """funasr-gguf 运行时句柄（``LoadedModel.model`` 字段承载）：CLI + 三份权重。"""
+
+    cli: Path
+    encoder: Path
+    llm: Path
+    vad: Path
 
 
 class ModelLoadError(Exception):
@@ -77,6 +103,8 @@ def load_model(name: str, entry: ModelEntry) -> LoadedModel:
     """
     if entry.engine_type == "qwen3-asr":
         return _load_qwen3_asr(name, entry)
+    if entry.engine_type == "funasr-gguf":
+        return _load_funasr_gguf(name, entry)
     params = _build_automl_params(entry)
     logger.info("开始加载模型 {}（{}）", name, entry.source)
     try:
@@ -115,6 +143,68 @@ def _load_qwen3_asr(name: str, entry: ModelEntry) -> LoadedModel:
     return LoadedModel(name, entry, model)
 
 
+def _gguf_cli_path() -> Path:
+    """vendor 的 llama-funasr-cli 路径（双环境解析，同 ``_selftest_pcm_path`` 约定）。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None:  # PyInstaller 打包形态
+        return Path(meipass) / "bin" / GGUF_CLI_NAME
+    return COMPONENT_ROOT / "bin" / GGUF_CLI_NAME
+
+
+def _gguf_tmp_dir() -> Path:
+    """GGUF 临时 WAV 目录（XDG runtime 层；🔴 禁止系统 /tmp 与组件根）。"""
+    return DEFAULT_RUNTIME_DIR / "zen_vocotype_gguf"
+
+
+def _load_funasr_gguf(name: str, entry: ModelEntry) -> LoadedModel:
+    """加载 funasr-gguf 引擎：校验 vendor 二进制 + 三份 GGUF 权重就位。
+
+    ``model_id`` 条目经 modelscope 下载（encoder/llm 按文件名精准下载，
+    避免拉取全部量化档；VAD 为独立共享仓库）；``local_path`` 条目指向
+    含三份权重的目录（离线手动放置）。不执行真实推理——试推理自检
+    统一由 ``selftest`` 负责（顺带完成 mmap 页缓存预热）。
+    """
+    logger.info("开始加载模型 {}（{}，引擎 funasr-gguf）", name, entry.source)
+    try:
+        cli = _gguf_cli_path()
+        if not cli.exists():
+            raise ModelLoadError(f"GGUF 运行时二进制缺失: {cli}")
+        encoder_name = entry.extra_params.get("encoder", GGUF_DEFAULT_ENCODER)
+        llm_name = entry.extra_params.get("llm", GGUF_DEFAULT_LLM)
+        vad_name = entry.extra_params.get("vad", GGUF_DEFAULT_VAD)
+        if entry.local_path is not None:
+            weights_dir = vad_dir = Path(entry.local_path)
+        else:
+            from modelscope import snapshot_download  # 延迟导入，同 funasr 策略
+
+            weights_dir = Path(
+                snapshot_download(entry.model_id, allow_patterns=[encoder_name, llm_name])
+            )
+            vad_repo = entry.extra_params.get("vad_repo", GGUF_DEFAULT_VAD_REPO)
+            vad_dir = Path(snapshot_download(vad_repo))
+        runtime = GgufRuntime(
+            cli=cli,
+            encoder=weights_dir / encoder_name,
+            llm=weights_dir / llm_name,
+            vad=vad_dir / vad_name,
+        )
+        for label, file in (("encoder", runtime.encoder), ("llm", runtime.llm),
+                            ("vad", runtime.vad)):
+            if not file.exists():
+                raise ModelLoadError(f"模型 {name!r} GGUF 权重缺失（{label}）: {file}")
+    except ModelLoadError:
+        raise
+    except Exception as exc:
+        raise ModelLoadError(f"模型 {name!r} 加载失败: {exc}") from exc
+    # 启动/切换时清理残留临时 WAV（崩溃遗留；worker 单线程，无并发误删）
+    tmp_dir = _gguf_tmp_dir()
+    if tmp_dir.is_dir():
+        for stale in tmp_dir.glob("*.wav"):
+            stale.unlink(missing_ok=True)
+    logger.info("模型 {} 加载完成（GGUF 运行时）", name)
+    return LoadedModel(name, entry, runtime)
+
+
 def pcm_to_float_array(pcm: bytes):
     """16kHz/16bit/单声道 PCM 字节流转 float32 归一化数组（无第三方音频库）。"""
     import numpy as np
@@ -134,6 +224,8 @@ def run_inference(loaded: LoadedModel, audio) -> dict:
         if not results:
             raise RuntimeError("推理返回结构非法: 空结果列表")
         return {"text": results[0].text, "confidence": None}
+    if loaded.entry.engine_type == "funasr-gguf":
+        return _run_funasr_gguf(loaded.model, audio)
     result = loaded.model.generate(input=audio, cache={}, batch_size_s=60)
     if not isinstance(result, list) or not result or "text" not in result[0]:
         raise RuntimeError(f"推理返回结构非法: {type(result).__name__}")
@@ -147,6 +239,51 @@ def run_inference(loaded: LoadedModel, audio) -> dict:
 
         text = rich_transcription_postprocess(text)
     return {"text": text, "confidence": item.get("confidence")}
+
+
+def _run_funasr_gguf(runtime: GgufRuntime, audio) -> dict:
+    """GGUF 子进程推理：float32 数组 → 临时 WAV → llama-funasr-cli → 文本。
+
+    CLI 行为（v0.1.4 实测固化）：stdout 只含识别文本，日志全走 stderr；
+    退出码 0=成功，非 0=失败（原因在 stderr）。静默音频返回空文本属
+    合法结果（与现有引擎语义一致）。临时 WAV 用完即删（加载期另有
+    目录级清理兜底，见 ``_load_funasr_gguf``）。
+    """
+    import numpy as np
+
+    tmp_dir = _gguf_tmp_dir()
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    wav_path = tmp_dir / f"{uuid.uuid4().hex}.wav"
+    try:
+        pcm16 = np.clip(audio * PCM_NORMALIZE, -32768, 32767).astype(np.int16)
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(DEFAULT_SAMPLE_RATE)
+            wav_file.writeframes(pcm16.tobytes())
+        try:
+            proc = subprocess.run(
+                [
+                    str(runtime.cli),
+                    "--enc", str(runtime.encoder),
+                    "-m", str(runtime.llm),
+                    "--vad", str(runtime.vad),
+                    "-a", str(wav_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=GGUF_SUBPROCESS_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"GGUF CLI 超时（>{GGUF_SUBPROCESS_TIMEOUT_S:.0f}s）"
+            ) from exc
+        if proc.returncode != 0:
+            tail = " | ".join((proc.stderr or "").strip().splitlines()[-3:])
+            raise RuntimeError(f"GGUF CLI 失败(rc={proc.returncode}): {tail}")
+        return {"text": proc.stdout.strip(), "confidence": None}
+    finally:
+        wav_path.unlink(missing_ok=True)
 
 
 def selftest(loaded: LoadedModel) -> None:

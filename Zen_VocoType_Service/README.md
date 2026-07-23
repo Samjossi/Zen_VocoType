@@ -84,9 +84,13 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 ```yaml
 models:
   fun-asr-nano:
-    model_id: FunAudioLLM/Fun-ASR-Nano-2512
-    vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
-    extra_params: {trust_remote_code: true, remote_code: ./model.py}
+    model_id: FunAudioLLM/Fun-ASR-Nano-GGUF      # GGUF 权重仓库（encoder+llm 精准下载）
+    engine_type: funasr-gguf                      # 子进程运行时（vendor 二进制 bin/）
+    extra_params:
+      encoder: funasr-encoder-f16.gguf
+      llm: qwen3-0.6b-q8_0.gguf
+      vad_repo: FunAudioLLM/fsmn-vad-GGUF
+      vad: fsmn-vad.gguf
   sensevoice-small:
     model_id: iic/SenseVoiceSmall
     vad_model_id: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
@@ -98,16 +102,18 @@ default_model: fun-asr-nano
 
 - `model_id`（缓存命中/在线下载）与 `local_path`（本地直载）每条目二选一
 - 注册表条目支持挂附属 VAD / 标点模型
-- `engine_type`：`funasr`（默认，可省略）/ `qwen3-asr`；加载与推理分支的唯一依据
+- `engine_type`：`funasr`（默认，可省略）/ `qwen3-asr` / `funasr-gguf`；
+  加载与推理分支的唯一依据
 - `extra_params`：引擎特定加载附加参数（funasr 并入 `AutoModel()`，
-  qwen3-asr 并入 `Qwen3ASRModel.from_pretrained()`）；
-  例：Fun-ASR-Nano 需 `trust_remote_code: true` + `remote_code: ./model.py`
+  qwen3-asr 并入 `Qwen3ASRModel.from_pretrained()`，
+  funasr-gguf 覆盖 GGUF 文件名/仓库约定）；
+  例：Fun-ASR-Nano PyTorch 版需 `trust_remote_code: true` + `remote_code: ./model.py`
 
 ### 内置引擎一览
 
 | 注册名 | 引擎 | 定位 | CPU 实测 RTF |
 | --- | --- | --- | --- |
-| `fun-asr-nano` | funasr | 通用离线识别（默认）：自带标点/热词/方言的新一代 LLM-ASR | ≈0.27–0.34 |
+| `fun-asr-nano` | funasr-gguf | 通用离线识别（默认）：自带标点/热词/方言的新一代 LLM-ASR，GGUF/llama.cpp 运行时（q8_0，子进程调用 vendor 二进制 `bin/llama-funasr-cli`） | ≈0.08–0.22 |
 | `sensevoice-small` | funasr | 多语言 + 情感/事件识别 | 极快 |
 | `qwen3-asr-1.7b` | qwen3-asr | 高精度多语言/方言 SOTA（⚠️ 慢于实时，短音频/实验性） | ≈1.2 |
 

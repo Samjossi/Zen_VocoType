@@ -9,16 +9,22 @@
 - ``selftest`` 双引擎假模型通路（真实自检 PCM 资产）
 """
 
+import subprocess
 import types
+from pathlib import Path
 
 import pytest
 
 from zen_vocotype_service.config import ModelEntry
+from zen_vocotype_service.models import loader as loader_mod
 from zen_vocotype_service.models.loader import (
+    GgufRuntime,
     LoadedModel,
     ModelLoadError,
     _build_automl_params,
+    _load_funasr_gguf,
     _load_qwen3_asr,
+    _run_funasr_gguf,
     load_model,
     pcm_to_float_array,
     run_inference,
@@ -36,6 +42,11 @@ class TestModelEntryEngineType:
     def test_qwen3_asr_engine_type_accepted(self):
         entry = ModelEntry(model_id="Qwen/Qwen3-ASR-1.7B", engine_type="qwen3-asr")
         assert entry.engine_type == "qwen3-asr"
+
+    def test_funasr_gguf_engine_type_accepted(self):
+        entry = ModelEntry(model_id="FunAudioLLM/Fun-ASR-Nano-GGUF",
+                           engine_type="funasr-gguf")
+        assert entry.engine_type == "funasr-gguf"
 
     def test_unknown_engine_type_rejected(self):
         with pytest.raises(ValueError):
@@ -246,3 +257,138 @@ class TestSelftestBothEngines:
         loaded = LoadedModel("fake-qwen", entry, _FakeQwen3ASRModel(fail=True))
         with pytest.raises(ModelLoadError, match="试推理自检失败"):
             selftest(loaded)
+
+
+class TestFunasrGgufLoad:
+    """funasr-gguf 加载分支：二进制/权重校验与下载路径。"""
+
+    @pytest.fixture()
+    def gguf_files(self, tmp_path, monkeypatch):
+        """造齐三份假权重 + 假 CLI，返回 (weights_dir, cli_path)。"""
+        weights = tmp_path / "weights"
+        weights.mkdir()
+        for fn in ("funasr-encoder-f16.gguf", "qwen3-0.6b-q8_0.gguf", "fsmn-vad.gguf"):
+            (weights / fn).write_bytes(b"fake-gguf")
+        cli = tmp_path / "llama-funasr-cli"
+        cli.write_text("#!/bin/true")
+        monkeypatch.setattr(loader_mod, "_gguf_cli_path", lambda: cli)
+        monkeypatch.setattr(loader_mod, "_gguf_tmp_dir", lambda: tmp_path / "gguf_tmp")
+        return weights, cli
+
+    def test_model_id_downloads_encoder_llm_vad(self, monkeypatch, gguf_files):
+        weights, _ = gguf_files
+        import modelscope
+
+        calls = []
+
+        def fake_download(repo, allow_patterns=None):
+            calls.append((repo, allow_patterns))
+            return str(weights)
+
+        monkeypatch.setattr(modelscope, "snapshot_download", fake_download)
+        entry = ModelEntry(
+            model_id="FunAudioLLM/Fun-ASR-Nano-GGUF",
+            engine_type="funasr-gguf",
+            extra_params={"vad_repo": "FunAudioLLM/fsmn-vad-GGUF"},
+        )
+        loaded = _load_funasr_gguf("fun-asr-nano", entry)
+        assert isinstance(loaded.model, GgufRuntime)
+        # 🔴 encoder/llm 按文件名精准下载（不拉全部量化档），VAD 走独立仓库
+        assert calls[0] == (
+            "FunAudioLLM/Fun-ASR-Nano-GGUF",
+            ["funasr-encoder-f16.gguf", "qwen3-0.6b-q8_0.gguf"],
+        )
+        assert calls[1][0] == "FunAudioLLM/fsmn-vad-GGUF"
+
+    def test_local_path_skips_download(self, monkeypatch, gguf_files):
+        weights, _ = gguf_files
+        import modelscope
+
+        def _forbidden(*a, **k):
+            raise AssertionError("local_path 条目不应调用 snapshot_download")
+
+        monkeypatch.setattr(modelscope, "snapshot_download", _forbidden)
+        entry = ModelEntry(local_path=weights, engine_type="funasr-gguf")
+        loaded = _load_funasr_gguf("fun-asr-nano", entry)
+        assert loaded.model.encoder == weights / "funasr-encoder-f16.gguf"
+
+    def test_missing_weight_raises(self, gguf_files):
+        weights, _ = gguf_files
+        (weights / "qwen3-0.6b-q8_0.gguf").unlink()
+        entry = ModelEntry(local_path=weights, engine_type="funasr-gguf")
+        with pytest.raises(ModelLoadError, match="GGUF 权重缺失"):
+            _load_funasr_gguf("fun-asr-nano", entry)
+
+    def test_missing_cli_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            loader_mod, "_gguf_cli_path", lambda: tmp_path / "no-such-cli"
+        )
+        entry = ModelEntry(local_path=tmp_path, engine_type="funasr-gguf")
+        with pytest.raises(ModelLoadError, match="二进制缺失"):
+            _load_funasr_gguf("fun-asr-nano", entry)
+
+
+class TestRunFunasrGguf:
+    """funasr-gguf 推理分支：子进程调用、输出解析、临时文件清理。"""
+
+    @pytest.fixture()
+    def runtime(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(loader_mod, "_gguf_tmp_dir", lambda: tmp_path)
+        return GgufRuntime(
+            cli=tmp_path / "cli",
+            encoder=tmp_path / "enc.gguf",
+            llm=tmp_path / "llm.gguf",
+            vad=tmp_path / "vad.gguf",
+        )
+
+    def _fake_run(self, monkeypatch, stdout="识别文本。", returncode=0, stderr=""):
+        seen = {}
+
+        def fake_run(args, capture_output, text, timeout):
+            seen["args"] = args
+            seen["timeout"] = timeout
+            return subprocess.CompletedProcess(args, returncode, stdout, stderr)
+
+        monkeypatch.setattr(loader_mod.subprocess, "run", fake_run)
+        return seen
+
+    def test_success_returns_stdout_text(self, monkeypatch, runtime, tmp_path):
+        seen = self._fake_run(monkeypatch, stdout="你好世界。\n")
+        outcome = _run_funasr_gguf(runtime, pcm_to_float_array(b"\x01\x00" * 160))
+        assert outcome == {"text": "你好世界。", "confidence": None}
+        args = seen["args"]
+        assert args[1:3] == ["--enc", str(runtime.encoder)]
+        assert args[3:5] == ["-m", str(runtime.llm)]
+        assert args[5:7] == ["--vad", str(runtime.vad)]
+        # 临时 WAV 用完即删
+        assert not Path(args[7]).exists()
+        assert list(tmp_path.glob("*.wav")) == []
+
+    def test_empty_text_allowed(self, monkeypatch, runtime):
+        """静默音频返回空文本属合法结果（与既有引擎语义一致）。"""
+        self._fake_run(monkeypatch, stdout="")
+        outcome = _run_funasr_gguf(runtime, pcm_to_float_array(b"\x00\x00" * 160))
+        assert outcome["text"] == ""
+
+    def test_nonzero_rc_raises_with_stderr_tail(self, monkeypatch, runtime):
+        self._fake_run(
+            monkeypatch, returncode=1, stdout="",
+            stderr="log1\naudio: failed to open/decode\nfailed to read audio",
+        )
+        with pytest.raises(RuntimeError, match="rc=1.*failed to read audio"):
+            _run_funasr_gguf(runtime, pcm_to_float_array(b"\x01\x00" * 160))
+
+    def test_timeout_raises(self, monkeypatch, runtime):
+        def fake_run(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="cli", timeout=300)
+
+        monkeypatch.setattr(loader_mod.subprocess, "run", fake_run)
+        with pytest.raises(RuntimeError, match="GGUF CLI 超时"):
+            _run_funasr_gguf(runtime, pcm_to_float_array(b"\x01\x00" * 160))
+
+    def test_run_inference_routes_to_gguf(self, monkeypatch, runtime):
+        self._fake_run(monkeypatch, stdout="路由正确")
+        entry = ModelEntry(local_path="/x", engine_type="funasr-gguf")
+        loaded = LoadedModel("fake-gguf", entry, runtime)
+        outcome = run_inference(loaded, pcm_to_float_array(b"\x01\x00" * 160))
+        assert outcome["text"] == "路由正确"

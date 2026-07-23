@@ -63,8 +63,10 @@ hicolor 四档图标 `~/.local/share/icons/hicolor/<32,64,128,256>x*/apps/zen-vo
 
 1. 在有网机器下载模型（首次启动会自动下载，或经 modelscope 网页/CLI）
 2. 将缓存目录按原布局复制到目标机 `~/.local/share/zen_vocotype/models/`：
-   布局形如 `models/<组织>--<模型名>/snapshots/...`（默认 fun-asr-nano
-   家族共约 2.0GB：Fun-ASR-Nano-2512 + fsmn-vad）
+   布局形如 `models/<组织>--<模型名>/snapshots/master/<文件>`（默认 fun-asr-nano
+   为 GGUF 权重，共约 1.2GB：`FunAudioLLM--Fun-ASR-Nano-GGUF` 下
+   `funasr-encoder-f16.gguf` + `qwen3-0.6b-q8_0.gguf`，
+   外加 `FunAudioLLM--fsmn-vad-GGUF` 下 `fsmn-vad.gguf`）
 3. 校验：启动 Service，日志出现「服务就绪（ready）」即缓存命中直载成功；
    缓存未命中会自动尝试在线下载（离线环境将报加载失败，日志有明确原因）
 

@@ -1,6 +1,6 @@
-> **状态**：已确认（决策点 2026-07-23 07:32 拍板：替代 / vendor / q8_0，待实施）
+> **状态**：已实施
 > **范围**：`Zen_VocoType_Service`（新引擎类型、推理子进程、模型下载、打包）
-> **时间**：2026-07-23 07:26（设计，UTC+8）/ 2026-07-23 07:32（确认）
+> **时间**：2026-07-23 07:26（设计，UTC+8）/ 2026-07-23 07:32（确认）/ 2026-07-23 08:07（实施）
 > **优先级**：高
 
 # fun-asr-nano 提速修复（GGUF/llama.cpp 集成）实现计划
@@ -164,4 +164,71 @@ CLI 只接受音频文件路径，`run_inference` 的 float32 数组需落临时
 
 ---
 
-*创建于 2026-07-23 07:26 (UTC+8)*
+## 八、实施记录（2026-07-23）
+
+四阶段全部完成，实际耗时约 25 分钟（阶段 1 调研结论全部利好是主因）。
+
+### 阶段 1 调研结论（全部优于预期）
+
+1. **ModelScope 有 GGUF 官方镜像**（`FunAudioLLM/Fun-ASR-Nano-GGUF` 含
+   q8_0、`FunAudioLLM/fsmn-vad-GGUF`）——权重下载完全留在既有 modelscope
+   统一缓存体系，HF 回退方案未启用（保留为隐性能力）。
+2. **CLI 输出天然机器可读**：stdout 只含识别文本，日志全走 stderr；
+   退出码 0/1、错误原因在 stderr——无需 json/quiet 开关，解析规则极简
+   （strip 即得），失败取 stderr 尾 3 行进异常。
+3. 二进制仅 5.9MB；vendor 清单：二进制 + MIT/Apache-2.0 双 license +
+   `bin/README.md`（来源/版本 v0.1.4/SHA256/升级纪律）；官方无校验和，
+   自记 SHA256 `9fe96105...`。
+
+### 关键实施事实
+
+- `engine_type` 第三值 `funasr-gguf` 落地，loader/run_inference 各增一处
+  分支，沿用「最小化 if 分支」红线；`GgufRuntime` dataclass 承载
+  CLI+三权重路径于 `LoadedModel.model`。
+- modelscope 下载用 `allow_patterns=[encoder, llm]` 精准拉取（1.2GB），
+  避免全仓库 1.76GB（实测空目录首启验证：仅下载所需文件）。
+- 临时 WAV 落 `$XDG_RUNTIME_DIR/zen_vocotype_gguf/`（uuid 文件名、
+  用完即删 + 加载期目录级清理双保险），遵守「禁系统 /tmp」红线。
+- `LoadedModel` 持有路径配置而非加载态模型：GGUF 的「加载」实为校验+
+  下载，真实推理每次子进程；selftest 复用统一入口，顺带 mmap 预热。
+
+### 验收记录
+
+| 项 | 结果 |
+|---|---|
+| 服务端快速测试（新增 10 项 GGUF 分支单测） | 115 passed |
+| 服务端 slow（真实加载/切换/协议 E2E/60s 标定/样本识别） | 8 passed（63s，GGUF 提速后套件耗时 322s→63s） |
+| 真机 funasr-gguf 加载+自检+识别 | 38s 加载（含 1.3GB 下载），RTF=0.20（3s），文本正确带标点 |
+| 打包二进制收编 | `_internal/bin/` 含可执行 CLI（权限保留）+ 双 license |
+| 打包 E2E（9 段真实录音） | 8 段重合率 1.000 + 1 段 0.893，ready 3.5s |
+| 三引擎切换矩阵 | sensevoice RTF=0.04（元标签过滤同步验证）/ qwen3-asr RTF=1.09 / fun-asr-nano GGUF RTF=0.22 |
+| 空 models_dir 首启（4.3） | 37s 含下载就绪，识别正确；精准下载 1.2GB |
+
+### 速度修复效果（对照实测报告基线）
+
+| 场景 | PyTorch 路径（修复前） | GGUF q8_0（修复后） | paraformer（参照） |
+|---|---|---|---|
+| 2.8~3s 短语音 | RTF 0.33–0.34（~1.0s） | **RTF 0.20–0.22（~0.6s）** | RTF 0.03 |
+| 165.7s 长音频 | RTF 0.273（45.2s） | **RTF 0.081（13.4s，快 3.4 倍）** | RTF 0.03 |
+
+手感目标达成：5 秒语音上屏等待 ~1.5s → ~0.8s。
+
+### 实施偏差与修复
+
+- `test_model_pipeline.py::test_load_failure_has_real_reason` 借用
+  fun-asr-nano 条目构造坏路径，GGUF 分支错误文案为「GGUF 权重缺失」
+  与原断言「加载失败」不符——改用 sensevoice-small 条目（测试意图
+  为 funasr 通用路径），非产品代码问题。
+
+### 后续观察项
+
+- 预编译二进制为 linux-x64-avx2 构建，仅适配本机/同代 CPU；他机分发需
+  替换通用 x64 版（`bin/README.md` 已记录）。
+- CLI 输出格式依赖 pin v0.1.4；升级运行时版本须重跑全量验收
+  （bin/README.md 升级纪律）。
+- GGUF 版无 confidence 字段（None，归一化语义一致）；无热词参数透传
+  （CLI 未见 hotword 开关，PyTorch 版恢复后可用）。
+
+---
+
+*创建于 2026-07-23 07:26 (UTC+8)；实施完成于 2026-07-23 08:07 (UTC+8)*

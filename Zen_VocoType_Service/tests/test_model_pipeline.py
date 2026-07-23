@@ -45,7 +45,7 @@ class TestRegistryLoad:
             loaded.release()
 
     def test_load_failure_has_real_reason(self, settings):
-        bad_entry = settings.models["fun-asr-nano"].model_copy(
+        bad_entry = settings.models["sensevoice-small"].model_copy(
             update={"local_path": Path("/nonexistent/model"), "model_id": None}
         )
         with pytest.raises(ModelLoadError, match="加载失败"):

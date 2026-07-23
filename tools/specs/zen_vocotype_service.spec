@@ -40,7 +40,11 @@ for _pkg in ("torch", "funasr", "modelscope", "qwen_asr"):
 a = Analysis(
     [str(PROJECT_ROOT / COMPONENT / "main.py")],
     pathex=component_pathex(COMPONENT),
-    datas=component_datas(COMPONENT) + _ml_datas,
+    # bin/：vendor 的 llama-funasr-cli（funasr-gguf 引擎子进程运行时，
+    # 双环境解析 _MEIPASS/bin，见 models/loader.py _gguf_cli_path）
+    datas=component_datas(COMPONENT)
+    + [(str(PROJECT_ROOT / COMPONENT / "bin"), "bin")]
+    + _ml_datas,
     hiddenimports=_ml_hiddenimports,
     binaries=_ml_binaries,
     hookspath=[],

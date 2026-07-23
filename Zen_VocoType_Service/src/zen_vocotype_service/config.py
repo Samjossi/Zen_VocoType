@@ -53,10 +53,11 @@ class ModelEntry(BaseModel):
     description: str = ""
     #: 引擎类型：加载/推理分支的唯一依据（loader/worker 各一处 if）。
     #: 默认 "funasr"，现有条目与用户旧配置零感知
-    engine_type: Literal["funasr", "qwen3-asr"] = "funasr"
-    #: 引擎特定加载附加参数，原样并入引擎加载调用：
-    #: funasr → AutoModel(**params)；qwen3-asr → Qwen3ASRModel.from_pretrained(**params)
-    #: （例：Fun-ASR-Nano 需 trust_remote_code/remote_code）
+    engine_type: Literal["funasr", "qwen3-asr", "funasr-gguf"] = "funasr"
+    #: 引擎特定加载附加参数：
+    #: funasr → 原样并入 AutoModel()（例：Fun-ASR-Nano 的 trust_remote_code/remote_code）
+    #: qwen3-asr → 原样并入 Qwen3ASRModel.from_pretrained()
+    #: funasr-gguf → GGUF 文件名/仓库覆盖（encoder/llm/vad/vad_repo，均有默认约定）
     extra_params: dict[str, Any] = {}
 
     @model_validator(mode="after")
@@ -76,15 +77,26 @@ class ModelEntry(BaseModel):
 #: 内置默认注册表（用户可在 config.yaml 的 models 段覆盖/扩充）
 #: 2026-07-23 移除 paraformer-large/seaco-paraformer（评估记录：work plans/
 #: 2026-07-23-06_旧引擎移除评估记录.md），默认引擎同步迁至 fun-asr-nano
+#: 2026-07-23 fun-asr-nano 切换为 GGUF/llama.cpp 运行时（提速修复计划：
+#: work plans/2026-07-23-07_fun-asr-nano提速修复（GGUF集成）实现计划.md）。
+#: PyTorch 版恢复方法（备选）：engine_type 改回 "funasr"，条目替换为
+#: model_id=FunAudioLLM/Fun-ASR-Nano-2512 +
+#: vad_model_id=iic/speech_fsmn_vad_zh-cn-16k-common-pytorch +
+#: extra_params={trust_remote_code: true, remote_code: ./model.py}
 DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
     "fun-asr-nano": {
-        "model_id": "FunAudioLLM/Fun-ASR-Nano-2512",
-        "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-        "extra_params": {"trust_remote_code": True, "remote_code": "./model.py"},
+        "model_id": "FunAudioLLM/Fun-ASR-Nano-GGUF",
+        "engine_type": "funasr-gguf",
+        "extra_params": {
+            "encoder": "funasr-encoder-f16.gguf",
+            "llm": "qwen3-0.6b-q8_0.gguf",
+            "vad_repo": "FunAudioLLM/fsmn-vad-GGUF",
+            "vad": "fsmn-vad.gguf",
+        },
         "description": "通用离线识别（默认）。新一代 LLM-ASR（阿里通义 2025-12，0.8B），"
-        "SenseVoice 编码器 + Qwen3-0.6B 解码器，自带标点与时间戳，支持中/英/日"
-        "及中文七大方言、歌词说唱识别，难例与长尾词表现优于 Paraformer 代。"
-        "支持热词注入。CPU 实测 RTF≈0.27–0.34，日常可用。",
+        "自带标点，支持中/英/日及中文七大方言、歌词说唱识别与热词注入，"
+        "难例与长尾词表现优于上一代模型。GGUF/llama.cpp 运行时（q8_0），"
+        "CPU 实测 RTF≈0.08–0.12，说完即贴。",
     },
     "sensevoice-small": {
         "model_id": "iic/SenseVoiceSmall",
