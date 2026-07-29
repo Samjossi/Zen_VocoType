@@ -8,7 +8,7 @@
 """
 
 #: 协议版本号（两位数 major.minor）；帧格式/action/错误码的任何不兼容变更必须升版本
-PROTOCOL_VERSION: str = "1.1"
+PROTOCOL_VERSION: str = "1.2"
 
 
 def parse_version(text: str) -> tuple[int, int]:

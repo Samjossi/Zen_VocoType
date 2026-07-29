@@ -61,7 +61,8 @@ def _lock_path_for(settings: Settings) -> str:
 def _async_load_model(ctx: ServiceContext) -> None:
     """后台加载线程：加载默认模型 + 自检，推进状态 ready / error。"""
     settings = ctx.settings
-    manager = ModelManager(settings)
+    # state 传入 manager：未缓存模型下载时置 downloading 标记（托盘轮询呈现）
+    manager = ModelManager(settings, ctx.state)
     ctx.model_manager = manager
     try:
         manager.load_initial(settings.default_model)

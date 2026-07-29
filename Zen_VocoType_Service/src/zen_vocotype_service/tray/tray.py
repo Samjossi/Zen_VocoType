@@ -4,7 +4,7 @@
 
 - ① 版本项（禁用态展示，🔴 必须首行）：``Zen_VocoType_Service v<版本>`` +
   ``版本: <版本>（开发版/打包版）``——与客户端及旧 GridChat 托盘明确区分
-- ② 状态行（禁用态展示）：加载中… / 就绪 / 切换中… / 错误（原因）
+- ② 状态行（禁用态展示）：加载中… / 下载中…（模型名）/ 就绪 / 切换中… / 错误（原因）
 - ③ 当前模型行（禁用态展示）
 - ④ 切换模型 ► 子菜单：注册表逐键列出，当前模型前缀 ✓
 - ⑤ 模型清单…：注册表全量详情对话框（特点/状态/缓存/官网链接，
@@ -14,8 +14,13 @@
 - ⑦ 打开日志目录
 - ⑧ 退出服务（与 SIGTERM 汇流同一退出序列）
 
-状态色（与客户端选型九同配色）：橙=加载中/切换中、绿=就绪、红=错误，
+状态色（与客户端选型九同配色）：橙=加载中/下载中/切换中、绿=就绪、红=错误，
 以基础图标右下角叠加色点实现（不重绘整套图标资产）。
+
+下载提醒（模型缺失与下载提醒计划 D3）：轮询 ``state.downloading_model``
+呈现「下载中…（模型名）」持续状态；空→非空跳变时弹一次气泡
+（``showMessage``，fire-and-forget），完成/失败不弹（决策裁定）。
+``supportsMessages()`` 为 False 时降级仅状态行并记 warning 一次（🔴 不静默）。
 
 状态同步用 QTimer 轮询 ``ServiceContext``（``state`` 读写持锁、
 ``worker.switching`` 为 ``threading.Event``，天然线程安全），
@@ -156,8 +161,14 @@ class ServiceTray(QObject):
 
         # 状态图标缓存（状态仅 3 种，构造期预生成；避免稳态 2Hz 重绘 + SNI 广播）
         self._status_icons = {s: status_icon(self._base_icon, s) for s in TrayStatus}
-        #: 上次应用的快照（status, model, detail, switching）；None 表示尚未应用
+        #: 上次应用的快照（status, model, detail, switching, downloading）；
+        #: None 表示尚未应用
         self._last_snapshot: tuple | None = None
+
+        # 气泡通知可用性探测一次（不支持时下载提醒降级为仅状态行，🔴 不静默）
+        self._messages_supported = QSystemTrayIcon.supportsMessages()
+        if not self._messages_supported:
+            logger.warning("系统托盘不支持气泡通知，下载提醒降级为仅状态行呈现")
 
         # 状态轮询（Qt 主线程执行；读取源全部线程安全）
         self._poll_timer = QTimer(self)
@@ -181,23 +192,34 @@ class ServiceTray(QObject):
         """轮询 ServiceContext 快照，刷新图标色 + 状态行 + 模型行 + 子菜单。
 
         快照未变化时直接返回（稳态零绘制、零 SNI NewIcon 广播）。
+        下载标记空→非空跳变时触发一次「开始下载」气泡（T6）。
         """
         state = self._ctx.state
         worker = self._ctx.worker
         status = state.status
         model = state.current_model
         detail = state.error_detail or ""
+        downloading = state.downloading_model
         switching = worker is not None and worker.switching
 
-        snapshot = (status, model, detail, switching)
+        snapshot = (status, model, detail, switching, downloading)
         if snapshot == self._last_snapshot:
             return
+        prev_downloading = self._last_snapshot[4] if self._last_snapshot else None
         self._last_snapshot = snapshot
+
+        if downloading and not prev_downloading:
+            self._notify_download_started(downloading)
 
         if status == STATUS_ERROR:
             tray_status = TrayStatus.ERROR
             label = TrayStatus.ERROR.label
             status_text = f"状态：{label}" + (f"（{_truncate(detail)}）" if detail else "")
+        elif downloading:
+            # 下载是加载/切换的子阶段：橙色 + 状态行点名模型，优先级高于切换中
+            tray_status = TrayStatus.LOADING
+            label = "下载中…"
+            status_text = f"状态：{label}（{_truncate(downloading)}）"
         elif switching:
             tray_status = TrayStatus.LOADING
             label = "切换中…"
@@ -226,6 +248,30 @@ class ServiceTray(QObject):
         self._switch_menu.setEnabled(can_switch)
         for name, action in self._model_actions.items():
             action.setText(f"✓ {name}" if name == model else name)
+
+    # ------------------------------------------------------------------
+    # 下载提醒气泡（T6）
+    # ------------------------------------------------------------------
+
+    def _notify_download_started(self, model_name: str) -> None:
+        """「开始下载」气泡：fire-and-forget，不阻塞轮询。
+
+        仅下载标记空→非空跳变时由 ``_refresh`` 触发一次；完成/失败不弹
+        （决策裁定：完成看状态行转绿，失败看错误状态行）。
+        """
+        if not self._messages_supported:
+            return
+        self._show_balloon(
+            "模型下载",
+            f"模型 {model_name} 尚未缓存，正在从 ModelScope 下载，"
+            "大模型可能耗时较长…",
+        )
+
+    def _show_balloon(self, title: str, message: str) -> None:
+        """气泡发送唯一出口（测试可替身；Qt 调用仅此一处）。"""
+        self._tray.showMessage(
+            title, message, QSystemTrayIcon.MessageIcon.Information
+        )
 
     # ------------------------------------------------------------------
     # 菜单动作

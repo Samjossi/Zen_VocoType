@@ -5,4 +5,4 @@
 本文件由 ``tools/sync_versions.py`` 同步，🔴 禁止手改版本行。
 """
 
-SERVICE_VERSION: str = "1.1"
+SERVICE_VERSION: str = "1.2"

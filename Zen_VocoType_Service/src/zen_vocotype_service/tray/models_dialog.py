@@ -5,8 +5,9 @@
 - 描述文本唯一出处：``ModelEntry.description``（注册表条目自带，
   用户自建条目同理可写；空描述显式标注「未提供描述」，不静默留白）
 - ``model_id`` 条目附 ModelScope 官方页面链接（系统浏览器打开）；
-  缓存状态按 modelscope 布局（``<models_dir>/models/<org>--<name>``）探测，
-  未缓存提示「首次切换将自动下载」
+  缓存判定唯一出处为核心层 ``models/cache.is_model_cached``（含 GGUF
+  双仓与 vad/punc 附属模型），本模块只负责文案拼装，未缓存提示
+  「首次切换将自动下载」
 """
 
 from __future__ import annotations
@@ -15,9 +16,7 @@ import html
 from pathlib import Path
 
 from ..config import ModelEntry, Settings
-
-#: modelscope 缓存目录布局（MODELSCOPE_CACHE/models/<org>--<name>）
-_CACHE_SUBDIR = "models"
+from ..models.cache import is_model_cached
 
 #: ModelScope 官方页面地址模板（model_id 直接拼接）
 _MODELSCOPE_PAGE = "https://www.modelscope.cn/models/{}"
@@ -27,10 +26,7 @@ def cache_status(entry: ModelEntry, models_dir: Path) -> str:
     """缓存状态展示文案（``local_path`` 直载条目无需缓存）。"""
     if entry.model_id is None:
         return "本地直载（无需下载）"
-    cache_dir = (
-        Path(models_dir) / _CACHE_SUBDIR / entry.model_id.replace("/", "--")
-    )
-    if cache_dir.is_dir():
+    if is_model_cached(entry, models_dir):
         return "已缓存"
     return "未缓存（首次切换将自动下载）"
 

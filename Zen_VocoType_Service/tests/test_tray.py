@@ -194,6 +194,92 @@ class TestSwitchAvailability:
         assert worker.switched == []
 
 
+class TestDownloadNotice:
+    """下载提醒（模型缺失与下载提醒计划 T5/T6）。"""
+
+    def test_downloading_shows_label_and_model(self, tray, ctx):
+        ctx.state.mark_ready("fun-asr-nano")
+        ctx.state.mark_downloading("qwen3-asr-1.7b")
+        tray._refresh()
+        assert "状态：下载中…（qwen3-asr-1.7b）" in _menu_texts(tray)
+        assert "下载中" in tray.tray_icon.toolTip()
+
+    def test_downloading_takes_priority_over_switching(self, tray, ctx):
+        """切换中收到下载标记：状态行呈现下载中（下载是切换的子阶段）。"""
+        ctx.state.mark_ready("fun-asr-nano")
+        ctx.worker = _FakeWorker(switching=True)
+        ctx.state.mark_downloading("sensevoice-small")
+        tray._refresh()
+        assert "状态：下载中…（sensevoice-small）" in _menu_texts(tray)
+
+    def test_downloading_uses_orange_loading_icon(self, tray, ctx):
+        """下载中沿用橙色 LOADING 图标（不新增颜色语义）。"""
+        ctx.state.mark_ready("fun-asr-nano")
+        ctx.state.mark_downloading("qwen3-asr-1.7b")
+        tray._refresh()
+        expected = tray._status_icons[TrayStatus.LOADING].pixmap(64, 64).toImage()
+        actual = tray.tray_icon.icon().pixmap(64, 64).toImage()
+        assert bytes(actual.constBits()) == bytes(expected.constBits())
+
+    def test_balloon_fires_once_per_download(self, tray, ctx, monkeypatch):
+        """空→非空跳变只弹一次气泡；快照不变/下载持续期间不重复弹。"""
+        balloons: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            tray, "_show_balloon", lambda t, m: balloons.append((t, m))
+        )
+        tray._messages_supported = True
+        ctx.state.mark_downloading("qwen3-asr-1.7b")
+        tray._refresh()
+        tray._refresh()
+        tray._refresh()
+        assert len(balloons) == 1
+        title, message = balloons[0]
+        assert title == "模型下载"
+        assert "qwen3-asr-1.7b" in message and "尚未缓存" in message
+
+    def test_balloon_fires_again_for_next_download(self, tray, ctx, monkeypatch):
+        """下载结束后再次下载（换模型）应再次提醒。"""
+        balloons: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            tray, "_show_balloon", lambda t, m: balloons.append((t, m))
+        )
+        tray._messages_supported = True
+        ctx.state.mark_downloading("m1")
+        tray._refresh()
+        ctx.state.clear_downloading()
+        tray._refresh()
+        ctx.state.mark_downloading("m2")
+        tray._refresh()
+        assert len(balloons) == 2
+        assert "m1" in balloons[0][1] and "m2" in balloons[1][1]
+
+    def test_no_balloon_when_messages_unsupported(self, tray, ctx, monkeypatch):
+        """supportsMessages=False：降级仅状态行，不触发 Qt 气泡调用。"""
+        called: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            tray, "_show_balloon", lambda t, m: called.append((t, m))
+        )
+        tray._messages_supported = False
+        ctx.state.mark_downloading("qwen3-asr-1.7b")
+        tray._refresh()
+        assert called == []
+        assert "状态：下载中…（qwen3-asr-1.7b）" in _menu_texts(tray)
+
+    def test_download_finished_no_completion_balloon(self, tray, ctx, monkeypatch):
+        """下载完成（标记清除）不弹完成气泡（决策裁定 2）。"""
+        balloons: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            tray, "_show_balloon", lambda t, m: balloons.append((t, m))
+        )
+        tray._messages_supported = True
+        ctx.state.mark_downloading("m1")
+        tray._refresh()
+        ctx.state.clear_downloading()
+        ctx.state.mark_ready("m1")
+        tray._refresh()
+        assert len(balloons) == 1  # 仅开始下载那一次
+
+
 class TestStatusIcon:
     def test_all_statuses_produce_nonnull_icons(self):
         base = load_tray_icon()

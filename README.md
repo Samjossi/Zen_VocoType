@@ -93,6 +93,9 @@ hicolor 四档图标 `~/.local/share/icons/hicolor/<32,64,128,256>x*/apps/zen-vo
 
 ### 故障排查
 
+- 切换/首载未缓存模型时托盘状态行显示「下载中…（模型名）」并弹气泡提醒，图标橙色：
+  属正常在线下载（ModelScope），大模型可达数 GB、耗时数分钟到数十分钟，请耐心等待，
+  完成后自动转绿「就绪」；断网等失败时状态行转红并含原因（v1.2 起）
 - FUSE 缺失无法运行 AppImage：`./Zen_VocoType_Launcher.AppImage --appimage-extract-and-run`
   兜底，或安装 fuse（`sudo apt install fuse3`）；onedir 裸产物为二级分发物可直接用
 - 日志不可写：组件自动降级 stderr 输出并记 warning，不崩溃
