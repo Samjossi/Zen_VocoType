@@ -216,6 +216,36 @@ def _rpc_recognize_text() -> str:
     return resp["payload"]["text"]
 
 
+class TestHeadlessLoop:
+    """T42（S3）headless 主循环收敛回归：无显示环境拉起 → SIGTERM 优雅退出。
+
+    收敛后主循环由 ``shutdown_event.wait()`` 改为 ``QCoreApplication`` +
+    200ms 轮询，本用例固化该路径的进程级行为。
+    """
+
+    def test_headless_start_and_sigterm_exit(self):
+        if os.path.exists(TEST_SOCKET):
+            os.unlink(TEST_SOCKET)
+        env = dict(os.environ)
+        env["ZEN_VOCOTYPE_SERVICE_SOCKET_PATH"] = TEST_SOCKET
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        proc = subprocess.Popen(
+            [sys.executable, "main.py"],
+            cwd=str(SERVICE_ROOT),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            _wait_connectable(TEST_SOCKET, COLD_START_BUDGET_S)
+            health = _rpc(TEST_SOCKET, "health")
+            assert health["ok"] is True
+        finally:
+            _stop_service(proc)  # SIGTERM → 断言退出码 0（含退出序列全段）
+
+
 class TestInferTimeoutCalibration:
     """60 秒 PCM 实测 CPU 推理耗时，校验 300s 超时预算（fun-asr-nano 标定）。"""
 

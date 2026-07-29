@@ -12,6 +12,7 @@
 """
 
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -104,6 +105,7 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from zen_vocotype_client.app import ClientApp
+    from zen_vocotype_client.session_watch import SessionShutdownWatcher
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -116,6 +118,19 @@ def main() -> int:
     if client._tray is not None:
         client._tray.quit_requested.connect(app.quit)
     app.aboutToQuit.connect(client.shutdown)
+
+    # --- 关机优雅退出触发源（T42，计划 2026-0730-0221）：全部挂接须在
+    # client.start() 成功之后、app.exec() 之前，避免启动失败早退路径被干扰；
+    # 触发源只做 app.quit()（轻量投递），实际清理经 aboutToQuit → shutdown()
+    # 在事件循环内完成，无重入风险；清理幂等由 ClientApp._shutdown_done 保证
+    # 检测点 ①：GNOME 会话注销/关机（Qt6 xcb 插件自动注册会话客户端，
+    # 🔴 禁止交互/阻塞/弹窗，不调用 session.cancel()）
+    app.commitDataRequest.connect(lambda _session: app.quit())
+    # 检测点 ②：logind PrepareForShutdown 兜底（无系统总线静默降级）
+    SessionShutdownWatcher(app.quit, parent=app)
+    # SIGTERM/SIGINT：README 明示的退出路径必须确定性清理
+    signal.signal(signal.SIGTERM, lambda *_: app.quit())
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
     try:
         return app.exec()
     finally:

@@ -9,9 +9,12 @@
 4. 后台线程异步加载模型 + 自检 → 推进状态 ready / error
 5. 托盘（可选增强）：有显示环境时主线程跑 Qt 事件循环承载
    QSystemTrayIcon；headless / tray_enabled=false / 托盘不可用时
-   自动降级为 ``shutdown_event.wait()`` 纯控制台驻留
-6. SIGTERM / 托盘「退出服务」确定性退出（同一 shutdown_event 汇流）：
-   停止 accept → 通知 worker 停止 → 释放模型 → 删除 Socket 文件 → 释放锁
+   降级为 ``QCoreApplication`` + 200ms 轮询主循环（S3 收敛，T42：
+   两形态同构，QtDBus 关机监听得以统一接入）
+6. SIGTERM / 托盘「退出服务」/ logind 关机预告 确定性退出
+   （同一 shutdown_event 汇流）：
+   停止 accept → 通知 worker 停止 → 释放模型 → 清理会话 WAV →
+   删除 Socket 文件 → 释放锁
 """
 
 import os
@@ -125,7 +128,41 @@ def _create_tray_if_available(
 
 
 def _run_with_tray(app, shutdown_event: threading.Event) -> None:
-    """Qt 事件循环驻留；200ms 检查停服信号 → quit → 返回后走统一退出序列。"""
+    """Qt 事件循环驻留；200ms 检查停服信号 → quit → 返回后走统一退出序列。
+
+    关机优雅退出检测点（S2，T42）在此接入：① ``commitDataRequest``（GNOME
+    会话注销/关机，🔴 禁止交互/阻塞，不调用 session.cancel()）；
+    ② logind ``PrepareForShutdown`` 兜底（无系统总线静默降级）。
+    """
+    from PySide6.QtCore import QTimer
+
+    from zen_vocotype_service.session_watch import SessionShutdownWatcher
+
+    app.commitDataRequest.connect(lambda _session: shutdown_event.set())
+    SessionShutdownWatcher(shutdown_event.set, parent=app)
+
+    _poll_shutdown_event(app, shutdown_event)
+
+
+def _run_headless(shutdown_event: threading.Event) -> None:
+    """headless 主循环（S3 收敛，T42）：``QCoreApplication`` + 200ms 轮询。
+
+    🔴 必须用 ``QCoreApplication`` 而非 ``QApplication``——headless 下创建
+    ``QApplication`` 即 SIGABRT 硬崩。收敛后与托盘形态主循环同构，QtDBus
+    关机监听（检测点②）在两种形态统一接入；系统总线不可达（CI/容器）时
+    watcher 静默降级，主循环行为与原 ``shutdown_event.wait()`` 等价。
+    """
+    from PySide6.QtCore import QCoreApplication
+
+    from zen_vocotype_service.session_watch import SessionShutdownWatcher
+
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+    SessionShutdownWatcher(shutdown_event.set, parent=app)
+    _poll_shutdown_event(app, shutdown_event)
+
+
+def _poll_shutdown_event(app, shutdown_event: threading.Event) -> None:
+    """托盘/headless 共用的轮询主循环（单一出处）：200ms 检查停服信号 → quit。"""
     from PySide6.QtCore import QTimer
 
     watchdog = QTimer()
@@ -135,7 +172,6 @@ def _run_with_tray(app, shutdown_event: threading.Event) -> None:
     )
     watchdog.start()
     app.exec()
-
 
 
 def _models_dir_source() -> str:
@@ -228,7 +264,7 @@ def main() -> int:
     if app is not None:
         _run_with_tray(app, shutdown_event)  # Qt 事件循环驻留
     else:
-        shutdown_event.wait()  # 无托盘降级：原路径驻留
+        _run_headless(shutdown_event)  # 无托盘降级：QCoreApplication 轮询驻留
 
     logger.info("执行退出序列")
     server.shutdown()
@@ -236,6 +272,9 @@ def main() -> int:
         ctx.worker.stop()
     if ctx.model_manager is not None:
         ctx.model_manager.release()
+    # S4（T42）：进程退出时活跃 audio_chunk 会话 WAV 全局清理——断连钩子
+    # 只覆盖「客户端断开」场景，直接退出会残留文件（与断连/空闲清理幂等共存）
+    ctx.chunk_sessions.destroy_all()
     lock.release()
     logger.info("Zen_VocoType_Service 已退出")
     return 0

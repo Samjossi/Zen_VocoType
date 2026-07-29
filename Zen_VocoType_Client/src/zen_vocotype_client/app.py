@@ -106,6 +106,9 @@ class ClientApp(QObject):
         super().__init__()
         self._settings = settings
         self._qthread: QThread | None = None
+        #: 退出序列幂等 guard（C3，T42）：托盘退出 / commitDataRequest /
+        #: logind / SIGTERM 四个触发源可能并发或重复到达
+        self._shutdown_done = False
 
         # --- 状态机（仅主线程持有） ---
         self._sm = StateMachine()
@@ -220,7 +223,13 @@ class ClientApp(QObject):
         return 0
 
     def shutdown(self) -> None:
-        """确定性退出序列：轮询定时器 → 热键 → 录音 → 网络线程 → 托盘。"""
+        """确定性退出序列：轮询定时器 → 热键 → 录音 → 网络线程 → 托盘。
+
+        幂等（C3，T42）：二次调用直接返回，无副作用。
+        """
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
         logger.info("客户端退出序列开始")
         # 先停轮询，防止退出序列中定时器触发向已停 worker 线程悬挂投递探针
         self._loading_poll_timer.stop()
