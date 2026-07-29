@@ -178,6 +178,29 @@ class TestRegistryIdleAndDisconnect:
         registry.destroy_for_connection(OWNER_B)
         assert registry.active_count == 0
 
+    def test_destroy_all_on_process_exit(self, registry):
+        """S4（T42）：进程退出全局清理——全部活跃会话销毁且 WAV 无残留。
+
+        断连钩子只覆盖「客户端断开」；直接退出（SIGTERM/logind 关机）路径
+        必须经 destroy_all 兜底，退出后 chunk_session 目录无残留文件。
+        """
+        session_a = registry.begin(OWNER_A, _sid())
+        session_b = registry.begin(OWNER_B, _sid())
+        registry.append(OWNER_A, session_a.session_id, 0, PCM_1S)
+        registry.destroy_all()
+        assert registry.active_count == 0
+        assert not session_a.wav_path.exists()
+        assert not session_b.wav_path.exists()
+
+    def test_destroy_all_idempotent_with_other_cleanup(self, registry):
+        """S4 幂等：与断连钩子/空闲清理重复清理同一会话不得报错。"""
+        session = registry.begin(OWNER_A, _sid())
+        registry.destroy_for_connection(OWNER_A)  # 断连钩子先清理
+        registry.destroy_all()  # 全局清理随后：同会话重复清理无副作用
+        assert registry.active_count == 0
+        assert not session.wav_path.exists()
+        registry.destroy_all()  # 空表调用亦安全
+
 
 # ---------------------------------------------------------------------------
 # Handler 级（假模型 worker）

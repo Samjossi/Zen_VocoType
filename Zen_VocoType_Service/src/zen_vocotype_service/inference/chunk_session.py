@@ -165,6 +165,20 @@ class ChunkSessionRegistry:
                     logger.info("连接断开，销毁 audio_chunk 会话: {}", session.session_id)
                     self._destroy_locked(session)
 
+    def destroy_all(self) -> None:
+        """进程退出全局清理（S4，T42）：销毁全部活跃会话。
+
+        断连钩子只覆盖「客户端断开」场景；进程直接退出（SIGTERM/logind 关机）
+        时活跃会话 WAV 会残留。与断连钩子/空闲清理幂等共存——重复清理同一
+        会话不得报错。
+        """
+        with self._lock:
+            for session in list(self._sessions.values()):
+                logger.info(
+                    "进程退出全局清理，销毁 audio_chunk 会话: {}", session.session_id
+                )
+                self._destroy_locked(session)
+
     def sweep_idle(self) -> None:
         """周期兜底清理（连接线程 recv 空转驱动）。"""
         with self._lock:
