@@ -73,9 +73,13 @@ Zen_VocoType_Service v1.0        ← 版本项（禁用）
 | `default_model` | `fun-asr-nano` | 必须存在于注册表，否则启动报错退出 |
 | `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | loguru 轮转（10MB × 5）；三组件共享目录、文件名区分 |
 | `models` | 内置三条（见下） | 模型注册表（config.yaml 内嵌） |
-| `infer_timeout_s` | 300 | 推理超时预算（按默认引擎 fun-asr-nano 分钟级长音频实测 RTF≈0.27 标定） |
+| `infer_timeout_s` | 300 | 推理超时**基础值**（v1.4 起识别超时按音频时长动态计算：`max(基础值, 音频秒 × RTF × 安全系数)`；基础值兼作模型切换/下载预算） |
 | `queue_max_pending` | 4 | 推理队列积压阈值，超过拒绝新请求 |
 | `max_connections` | 8 | 连接数上限（防御性） |
+| `chunk_session_max_bytes` | 268435456（256MB） | audio_chunk 会话累计 PCM 上限（≈2.2 小时），超限 → 4004 |
+| `chunk_session_idle_timeout_s` | 120 | audio_chunk 会话空闲超时（惰性 + 周期兜底清理） |
+| `chunk_session_dir` | 契约库 `paths.DEFAULT_CHUNK_SESSION_DIR`（`$XDG_DATA_HOME/zen_vocotype/chunk_sessions`） | 会话临时 WAV 目录；🔴 禁止指向 tmpfs（2h WAV ≈ 230MB 会重现内存驻留） |
+| `rtf_safety_factor` | 2.0 | 超时动态化安全系数 |
 | `tray_enabled` | true | false 强制纯控制台模式（headless 自动降级见「系统托盘」） |
 | `tray_poll_interval_ms` | 500 | 托盘状态轮询间隔（≥100） |
 
@@ -104,6 +108,8 @@ default_model: fun-asr-nano
 - 注册表条目支持挂附属 VAD / 标点模型
 - `engine_type`：`funasr`（默认，可省略）/ `qwen3-asr` / `funasr-gguf`；
   加载与推理分支的唯一依据
+- `rtf_estimate`：RTF 保守标定（推理耗时/音频时长），超时动态化公式的引擎参数；
+  内置三条目已标定（0.2 / 0.3 / 1.5），自建条目省略时取保守缺省 1.0
 - `extra_params`：引擎特定加载附加参数（funasr 并入 `AutoModel()`，
   qwen3-asr 并入 `Qwen3ASRModel.from_pretrained()`，
   funasr-gguf 覆盖 GGUF 文件名/仓库约定）；
@@ -132,14 +138,26 @@ default_model: fun-asr-nano
 
 ## 协议行为摘要
 
-协议语义定稿见 `文档/通信协议设计_v1.0.md`；常量唯一出处为契约库
-`zen_vocotype_protocol`（action / 错误码 / 帧格式 / 路径），本组件不重复定义。
+协议语义定稿见 `文档/修改记录/2026-0730-0024_通信协议设计_v1.1.md`（v1.4）；
+常量唯一出处为契约库 `zen_vocotype_protocol`（action / 错误码 / 帧格式 / 路径 /
+chunk 对象），本组件不重复定义。
 
-- 已实现 action：`health` / `ready` / `recognize` / `model_info` / `model_switch`
-- `audio_chunk`（预留未实现）：入站校验放行后返回 **1005**；未知 action 返回 **1002**
-- 错误码 13 个全部按冻结表使用，未新增；关键映射：推理超时 → 4002（message 注明
-  `timeout`）、队列满/切换中收到 recognize → 2002（注明 `model_switching`）、
-  目标未注册 → 3001、加载失败 → 3002、切换自检失败回滚 → 3003
+- 已实现 action：`health` / `ready` / `recognize` / `model_info` / `model_switch` / `audio_chunk`
+- **长音频支持（v1.4，`audio_chunk` 流式通道）**：`begin`（建会话，可选总量预告）
+  → `N×data`（PCM 分片 ≤ `MAX_BODY_BYTES`，响应即 ack + 累计进度）→ `end`
+  （触发整段识别，返回 recognize 同款 payload）。单段支持 ≥2 小时（会话上限
+  256MB ≈ 2.2 小时）；会话 PCM 落盘 XDG data（🔴 非内存驻留），绑定连接、
+  断连即销毁、空闲 120s 清理。单帧 `MAX_BODY_BYTES`（约 10 分钟）上限不变
+- **`recognize`/`audio_chunk` end payload 追加字段（纯追加）**：`segments`
+  （时间戳分段，funasr 系引擎）与 `language`（SenseVoice 元标签提取）；
+  引擎给不出时省略（🔴 禁止编造——GGUF CLI 无时间戳能力，2026-07-30 调研）
+- **超时动态化（v1.4）**：识别超时 `max(infer_timeout_s, 音频秒 × RTF × 安全系数 2)`，
+  2 小时音频 + GGUF ≈ 2880s；长任务独占 worker 期间并发 recognize 按队列阈值
+  排队或 2002（语义不变）
+- 错误码新增 4003（会话状态非法）/ 4004（会话超上限）；关键映射：推理超时 → 4002
+  （message 注明 `timeout`）、队列满/切换中收到 recognize → 2002（注明
+  `model_switching`）、目标未注册 → 3001、加载失败 → 3002、切换自检失败回滚 → 3003、
+  qwen3-asr 超 20 分钟 → 4001（注明 `engine_limit`，禁止静默截断）
 - `model_switch` 为原子切换（先备后切 + 试推理自检，失败回滚旧模型不受影响），
   成功后以 `model_info` 交叉验证
 - Socket 本地访问控制（协议 §7.1 强制项）：bind 前校验非符号链接且属主自身 →
@@ -161,9 +179,9 @@ Zen_VocoType_Service/
 │   ├── state.py            # 线程安全服务状态（starting/ready/error）
 │   ├── context.py          # 处理器共享上下文
 │   ├── protocol_io.py      # 响应构建 + ProtocolError
-│   ├── handlers/           # health/ready/recognize/model_info/model_switch
+│   ├── handlers/           # health/ready/recognize/model_info/model_switch/audio_chunk
 │   ├── models/             # registry / loader（含自检）/ manager（原子切换）
-│   ├── inference/          # 单 worker 推理队列
+│   ├── inference/          # 单 worker 推理队列 + chunk_session（audio_chunk 会话表）
 │   └── tray/               # 系统托盘（icon_loader 双环境解析 + ServiceTray）
 ├── assets/                 # 托盘图标四档（icon_{32,64,128,256}.png，复制自 GridChat_Service/asset）
 │                           #   + 自检音频 selftest_16k.pcm（来源见 loader 注释）

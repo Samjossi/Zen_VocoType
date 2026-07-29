@@ -9,7 +9,7 @@
 - 1xxx 协议层错误（帧格式、版本、未知 action）
 - 2xxx 服务状态错误（未就绪、忙碌）
 - 3xxx 模型错误（未找到、加载/切换失败）
-- 4xxx 识别错误（音频非法、推理失败）
+- 4xxx 识别错误（音频非法、推理失败、audio_chunk 会话错误）
 """
 
 # ---------------------------------------------------------------------------
@@ -67,3 +67,9 @@ ERR_INVALID_AUDIO: int = 4001
 
 #: 推理执行失败
 ERR_RECOGNITION_FAILED: int = 4002
+
+#: audio_chunk 会话状态非法：会话不存在/已销毁/begin 重复/data 缺会话/seq 乱序跳号重复
+ERR_SESSION_STATE: int = 4003
+
+#: audio_chunk 会话累计音频超服务端上限（chunk_session_max_bytes）
+ERR_SESSION_TOO_LARGE: int = 4004

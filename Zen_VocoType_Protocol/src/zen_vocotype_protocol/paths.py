@@ -116,6 +116,11 @@ DEFAULT_MODELS_DIR: Path = _default_data_dir() / "zen_vocotype" / "models"
 #: launcher.log，各组件 logging_setup 单一出处），无冲突故不再分子目录
 DEFAULT_LOG_DIR: Path = _default_state_dir() / "zen_vocotype" / "logs"
 
+#: 默认 audio_chunk 会话临时 WAV 目录（XDG data 层——体积大（2h ≈ 230MB）、
+#: 会话结束即删、崩溃后可再生。🔴 禁止放 runtime tmpfs——tmpfs 即内存，
+#: 长音频会话 WAV 会重现全量内存驻留问题；服务端配置仅允许覆盖）
+DEFAULT_CHUNK_SESSION_DIR: Path = _default_data_dir() / "zen_vocotype" / "chunk_sessions"
+
 
 def get_recordings_dir() -> Path:
     """返回默认录音/识别文本保存目录：``$XDG_DATA_HOME/zen_vocotype/recordings``。

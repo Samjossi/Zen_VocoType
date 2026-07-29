@@ -1,12 +1,16 @@
-"""``recognize`` 处理器（协议 §3.3）。
+"""``recognize`` 处理器（协议 v1.1 §3.3）。
 
 校验链：未就绪（2001）→ 切换中（2002，message 注明 model_switching）
-→ 音频格式/体长校验（4001）→ 入队推理；队列满 2002、超时/推理失败 4002。
+→ 音频格式/体长校验（4001）→ 入队推理；队列满 2002、超时/推理失败 4002、
+引擎能力上限 4001（message 注明 engine_limit）。
+响应 payload 含 ``text``/``confidence``/``duration_ms``，引擎支持时
+纯追加 ``segments``/``language``（worker 统一构建，本处理器零额外分支）。
 """
 
 from zen_vocotype_service import state as state_mod
 from zen_vocotype_service.context import ServiceContext
 from zen_vocotype_service.inference.worker import QueueFullError, TaskTimeoutError
+from zen_vocotype_service.models.loader import EngineLimitError
 from zen_vocotype_service.protocol_io import ProtocolError
 
 from zen_vocotype_protocol import errors
@@ -66,6 +70,8 @@ def handle(header: dict, body: bytes, ctx: ServiceContext) -> dict:
         raise ProtocolError(
             errors.ERR_RECOGNITION_FAILED, f"推理超时（timeout）: {exc}"
         ) from exc
+    except EngineLimitError as exc:
+        raise ProtocolError(errors.ERR_INVALID_AUDIO, str(exc)) from exc
     except Exception as exc:
         raise ProtocolError(
             errors.ERR_RECOGNITION_FAILED, f"推理失败: {exc}"

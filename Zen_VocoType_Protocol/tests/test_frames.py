@@ -12,6 +12,7 @@ from zen_vocotype_protocol.frames import (
     HEADER_LEN_BYTES,
     MAX_BODY_BYTES,
     MAX_HEADER_BYTES,
+    MAX_RESPONSE_HEADER_BYTES,
     FrameError,
     MessageBuffer,
     encode_frame,
@@ -56,6 +57,27 @@ class TestEncodeFrame:
         with pytest.raises(FrameError) as exc_info:
             encode_frame(big_header)
         assert exc_info.value.fatal
+
+    def test_response_direction_relaxed_limit(self):
+        """响应方向放宽上限（v1.4）：超 64KB 的响应头可编码，
+        超 4MB 仍拒绝；解析侧同理（长音频识别文本场景）。"""
+        big_header = {"action": "recognize", "payload": {"text": "字" * 50_000}}
+        frame = encode_frame(big_header, max_header_bytes=MAX_RESPONSE_HEADER_BYTES)
+        buf = MessageBuffer(max_header_bytes=MAX_RESPONSE_HEADER_BYTES)
+        buf.feed(frame)
+        got_header, _ = buf.next_frame()
+        assert got_header == big_header
+        # 默认（请求方向）上限下同一帧被拒绝
+        with pytest.raises(FrameError):
+            encode_frame(big_header)
+        # 超响应方向上限仍拒绝
+        huge_header = {"action": "x", "pad": "y" * MAX_RESPONSE_HEADER_BYTES}
+        with pytest.raises(FrameError):
+            encode_frame(huge_header, max_header_bytes=MAX_RESPONSE_HEADER_BYTES)
+        buf2 = MessageBuffer()
+        buf2.feed((MAX_HEADER_BYTES + 1).to_bytes(HEADER_LEN_BYTES, "big"))
+        with pytest.raises(FrameError):
+            buf2.next_frame()
 
 
 class TestMessageBuffer:

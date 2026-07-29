@@ -57,7 +57,9 @@ class Settings(ComponentSettings):
     #: 个别应用读取偏慢导致粘贴到旧内容时可调大）。命名常量 + 可配置（C2）。
     paste_restore_delay_ms: int = Field(default=200, ge=0)
 
-    #: 最大录音时长（秒）。依据：对齐协议体上限 MAX_BODY_BYTES（约 10 分钟 PCM）留足余量；
+    #: 最大录音时长（秒）。依据：语音输入场景定位，远小于协议单帧体上限
+    #: MAX_BODY_BYTES（约 10 分钟 PCM，v1.4 该上限不变）；长音频识别属服务端
+    #: audio_chunk 流式通道场景，与本客户端录音上限无关；
     #: 到达上限自动停止并进入识别流程 + 通知（选型四）
     max_record_seconds: int = Field(default=60, gt=0)
 

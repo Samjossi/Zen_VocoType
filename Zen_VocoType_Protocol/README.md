@@ -6,6 +6,10 @@ Zen_VocoType 通信协议契约库（第四组件，库—使用方关系）。
 - **接入方式**：开发时 `uv pip install -e ./Zen_VocoType_Protocol`（editable install）；打包时随各端产物内嵌
 - **红线**：Service / Client / Launcher 三组件文件夹之间禁止任何相对路径 import；禁止各端自行重复定义协议常量
 
-协议语义详见 `文档/通信协议设计_v1.0.md`，常量以本库代码为单一出处。
+协议语义详见 `文档/修改记录/2026-0730-0024_通信协议设计_v1.1.md`（v1.4），
+常量以本库代码为单一出处。模块一览：`frames`（复合帧/MessageBuffer）、
+`actions`（action 常量）、`errors`（错误码冻结表）、`chunk`（audio_chunk
+流式通道 chunk 对象构造/校验，v1.4 新增）、`paths`（全局路径 + 音频格式约定）、
+`version`（协议版本与兼容判断）、`settings` / `user_config`（配置链行为）。
 协议版本号（`PROTOCOL_VERSION`，两位数 major.minor）的唯一真相为仓库根
 `../versions.toml`，由 `../tools/sync_versions.py` 同步至 `version.py`，禁止手改。

@@ -1,7 +1,7 @@
 """T1.3 集成测试：Socket 服务 + 协议层 + §7.1 访问控制。
 
 本机起真实服务（无模型，状态 starting / 手动推进），socket 直发复合帧验证：
-health/ready/错误帧/版本握手/Socket 权限 0600/audio_chunk → 1005。
+health/ready/错误帧/版本握手/Socket 权限 0600/audio_chunk 未就绪 2001。
 SO_PEERCRED 异 UID 拒绝以单元测试覆盖（同机无法伪造他 UID 连接）。
 """
 
@@ -109,11 +109,12 @@ class TestProtocolErrors:
         assert resp["ok"] is False
         assert resp["error"]["code"] == errors.ERR_UNKNOWN_ACTION
 
-    def test_audio_chunk_1005(self, running_server):
-        """已定义未实现的 audio_chunk 必须返回 1005（区别于 1002）。"""
+    def test_audio_chunk_not_ready_2001(self, running_server):
+        """audio_chunk 自 v1.4 起已实现（1005 分支对其自然失效）：
+        未就绪（starting）时校验链第一环返回 2001。"""
         resp = _request(running_server[2], _make_header("audio_chunk"))
         assert resp["ok"] is False
-        assert resp["error"]["code"] == errors.ERR_ACTION_NOT_SUPPORTED
+        assert resp["error"]["code"] == errors.ERR_NOT_READY
 
     def test_version_mismatch_1003(self, running_server):
         header = _make_header("health", protocol_version="9.9")

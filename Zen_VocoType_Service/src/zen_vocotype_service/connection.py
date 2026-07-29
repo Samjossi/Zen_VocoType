@@ -11,7 +11,12 @@ import socket
 import threading
 
 from zen_vocotype_protocol import actions, errors
-from zen_vocotype_protocol.frames import FrameError, MessageBuffer, encode_frame
+from zen_vocotype_protocol.frames import (
+    MAX_RESPONSE_HEADER_BYTES,
+    FrameError,
+    MessageBuffer,
+    encode_frame,
+)
 from zen_vocotype_protocol.version import PROTOCOL_VERSION, is_compatible
 from zen_vocotype_protocol.version import parse_version
 
@@ -30,6 +35,7 @@ RECV_TIMEOUT_S: float = 0.5
 _FALLBACK_ERROR_CODES: dict[str, int] = {
     actions.ACTION_RECOGNIZE: errors.ERR_RECOGNITION_FAILED,
     actions.ACTION_MODEL_SWITCH: errors.ERR_MODEL_SWITCH_FAILED,
+    actions.ACTION_AUDIO_CHUNK: errors.ERR_RECOGNITION_FAILED,
 }
 
 
@@ -63,11 +69,19 @@ def validate_inbound(header: dict) -> None:
         )
 
 
-def dispatch(header: dict, body: bytes, ctx: ServiceContext) -> dict:
-    """校验并路由一个请求帧，返回响应头字典（成功或错误）。"""
+def dispatch(header: dict, body: bytes, ctx: ServiceContext, owner: object = None) -> dict:
+    """校验并路由一个请求帧，返回响应头字典（成功或错误）。
+
+    ``owner`` 为连接令牌（ConnectionHandler 实例），仅 ``audio_chunk``
+    处理器需要（会话绑定连接，协议 v1.1 §3.6）。
+    """
     try:
         validate_inbound(header)
-        payload = HANDLERS[header["action"]](header, body, ctx)
+        action = header["action"]
+        if action == actions.ACTION_AUDIO_CHUNK:
+            payload = HANDLERS[action](header, body, ctx, owner)
+        else:
+            payload = HANDLERS[action](header, body, ctx)
         return build_response(header, ok=True, payload=payload)
     except ProtocolError as exc:
         return build_response(
@@ -125,6 +139,8 @@ class ConnectionHandler:
                 try:
                     data = self._conn.recv(RECV_CHUNK_BYTES)
                 except socket.timeout:
+                    # 空转驱动 audio_chunk 会话空闲清理（周期兜底，协议 v1.1 §3.6-3）
+                    self._ctx.chunk_sessions.sweep_idle()
                     continue
                 if not data:
                     break  # 对端关闭
@@ -135,6 +151,8 @@ class ConnectionHandler:
             if not self._stop_event.is_set():
                 logger.warning("连接 {} 收发异常: {}", self._peer, exc)
         finally:
+            # 🔴 连接断开即销毁其 audio_chunk 会话（协议 v1.1 §3.6-2，禁止残留）
+            self._ctx.chunk_sessions.destroy_for_connection(self)
             self.close()
             self._on_close(self)
             logger.debug("连接关闭: {}", self._peer)
@@ -154,8 +172,17 @@ class ConnectionHandler:
             if frame is None:
                 return True
             header, body = frame
-            response = dispatch(header, body, self._ctx)
-            self._send(encode_frame(response))
+            response = dispatch(header, body, self._ctx, owner=self)
+            try:
+                # 响应方向用放宽上限：长音频识别文本可超请求方向 64KB
+                #（契约库 MAX_RESPONSE_HEADER_BYTES，v1.4 真实缺陷修复——
+                # 2h 文本 ≈ 123KB 曾致响应编码 fatal 断连）
+                out = encode_frame(response, max_header_bytes=MAX_RESPONSE_HEADER_BYTES)
+            except FrameError as exc:
+                # 🔴 禁止静默：响应编码失败必须记日志再断连
+                logger.error("连接 {} 响应编码失败，断连: {}", self._peer, exc)
+                return False
+            self._send(out)
 
     def _send_error(self, code: int, message: str) -> None:
         """无请求上下文时的错误帧（request_id/action 置空）。"""

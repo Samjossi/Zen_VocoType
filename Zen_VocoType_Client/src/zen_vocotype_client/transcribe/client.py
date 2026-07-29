@@ -16,7 +16,11 @@ import socket
 from loguru import logger
 
 from zen_vocotype_protocol import actions, errors
-from zen_vocotype_protocol.frames import MessageBuffer, encode_frame
+from zen_vocotype_protocol.frames import (
+    MAX_RESPONSE_HEADER_BYTES,
+    MessageBuffer,
+    encode_frame,
+)
 from zen_vocotype_protocol.paths import (
     DEFAULT_CHANNELS,
     DEFAULT_SAMPLE_RATE,
@@ -28,8 +32,11 @@ from zen_vocotype_protocol.version import PROTOCOL_VERSION, is_compatible
 #: 5s 已覆盖极端调度抖动；超时即视为服务端异常
 SHORT_IO_TIMEOUT_S: float = 5.0
 
-#: recognize 请求的 I/O 超时（秒）。依据：服务端推理超时预算 60s（阶段 1 配置项），
-#: 客户端留 15s 网络与排队余量
+#: recognize 请求的 I/O 超时（秒）。依据：覆盖官方客户端 60s 录音场景
+#:（服务端短音频推理为基础值 300s 预算内的秒级~十秒级，75s 含排队余量）。
+#: v1.4 起长音频（分钟级以上）由服务端 audio_chunk 流式通道承载——
+#: 本客户端不发 audio_chunk，本值不动；第三方接入方须按音频时长自行
+#: 设定 end 帧 I/O 超时（≈ 音频时长 × RTF × 安全系数，协议 v1.1 §8.2）
 RECOGNIZE_IO_TIMEOUT_S: float = 75.0
 
 #: 单次 recv 块大小
@@ -84,7 +91,9 @@ class ProtocolClient:
                 f"无法连接服务端 Socket {self._socket_path}: {exc}"
             ) from exc
         self._sock = sock
-        self._buffer = MessageBuffer()  # 每连接独立缓冲（协议 §7-3）
+        # 每连接独立缓冲（协议 §7-3）；解析响应方向用放宽上限——
+        # 识别文本在响应头 payload 内，长音频文本可超请求方向 64KB
+        self._buffer = MessageBuffer(max_header_bytes=MAX_RESPONSE_HEADER_BYTES)
         logger.debug("已连接服务端 {}", self._socket_path)
 
     def close(self) -> None:

@@ -30,6 +30,14 @@ MAX_HEADER_BYTES: int = 64 * 1024
 #: 单帧二进制体最大字节数（16kHz/16bit/单声道 ≈ 32KB/s，上限约合 10 分钟录音）
 MAX_BODY_BYTES: int = 32 * 1024 * 600
 
+#: 响应方向 JSON 头放宽上限（v1.4 新增）。识别文本在响应头 payload 内，
+#: 长音频文本体积可观（实测 31 分钟中文识别 ≈ 1.05 万字 ≈ 31KB UTF-8，
+#: 2 小时 ≈ 4 万字 ≈ 123KB，超请求方向 64KB 上限）；本值 4MB 留 >30 倍余量。
+#: ⚠️ 方向语义：服务端解析请求、客户端编码请求仍用 ``MAX_HEADER_BYTES``（64KB
+#: 防御不变）；服务端编码响应、客户端解析响应用本值（响应为服务端自产，
+#: 上限语义是防失控兜底而非防恶意）
+MAX_RESPONSE_HEADER_BYTES: int = 4 * 1024 * 1024
+
 
 class FrameError(Exception):
     """帧编解码/解析失败的统一异常。
@@ -44,11 +52,13 @@ class FrameError(Exception):
         self.fatal: bool = fatal
 
 
-def encode_frame(header: dict, body: bytes = b"") -> bytes:
+def encode_frame(header: dict, body: bytes = b"", *, max_header_bytes: int = MAX_HEADER_BYTES) -> bytes:
     """将 JSON 头与二进制体编码为一帧字节流。
 
     :param header: JSON 头字典；携带体时必须声明 ``audio_bytes`` 且与实际体长一致
     :param body: 二进制体（如原始 PCM），可为空
+    :param max_header_bytes: 头上限（默认请求方向 64KB；服务端编码识别响应时
+        传 ``MAX_RESPONSE_HEADER_BYTES``——长音频文本可超 64KB）
     :raises FrameError: 头/体超防御性上限，或头声明的 ``audio_bytes`` 与体长不符
     """
     if body:
@@ -58,9 +68,9 @@ def encode_frame(header: dict, body: bytes = b"") -> bytes:
                 f"头声明 audio_bytes={declared!r} 与实际体长 {len(body)} 不符"
             )
     header_bytes = json.dumps(header, ensure_ascii=False).encode(HEADER_ENCODING)
-    if len(header_bytes) > MAX_HEADER_BYTES:
+    if len(header_bytes) > max_header_bytes:
         raise FrameError(
-            f"JSON 头 {len(header_bytes)} 字节超上限 {MAX_HEADER_BYTES}", fatal=True
+            f"JSON 头 {len(header_bytes)} 字节超上限 {max_header_bytes}", fatal=True
         )
     if len(body) > MAX_BODY_BYTES:
         raise FrameError(
@@ -76,10 +86,14 @@ class MessageBuffer:
     不足一帧时返回 ``None`` 等待更多数据。
 
     🔴 每条连接必须持有独立实例（协议 §7-3），禁止跨连接共享。
+
+    :param max_header_bytes: 头上限（默认请求方向 64KB；客户端解析服务端
+        识别响应时传 ``MAX_RESPONSE_HEADER_BYTES``——长音频文本可超 64KB）
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_header_bytes: int = MAX_HEADER_BYTES) -> None:
         self._buf: bytearray = bytearray()
+        self._max_header_bytes = max_header_bytes
 
     def feed(self, data: bytes) -> None:
         """追加收到的字节流。"""
@@ -95,9 +109,9 @@ class MessageBuffer:
             return None
 
         header_len = int.from_bytes(self._buf[:HEADER_LEN_BYTES], HEADER_BYTEORDER)
-        if header_len > MAX_HEADER_BYTES:
+        if header_len > self._max_header_bytes:
             raise FrameError(
-                f"JSON 头长度 {header_len} 超上限 {MAX_HEADER_BYTES}", fatal=True
+                f"JSON 头长度 {header_len} 超上限 {self._max_header_bytes}", fatal=True
             )
         if len(self._buf) < HEADER_LEN_BYTES + header_len:
             return None

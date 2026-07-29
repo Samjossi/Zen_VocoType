@@ -12,5 +12,5 @@
 #: 客户端版本号（单一出处；pyproject.toml 经 hatch 动态读取本值，
 #: 托盘菜单版本显示引用本值——与旧 GridChat 明确区分。
 #: 🔴 唯一真相为仓库根 versions.toml，由 tools/sync_versions.py 同步，禁止手改本行）
-__version__ = "1.3"
+__version__ = "1.4"
 

@@ -1,7 +1,8 @@
 """专用推理队列 + 单 worker 线程（选型四）。
 
-- 请求入队即带超时预算（``Settings.infer_timeout_s``，默认 60s，
-  依据：协议 ``MAX_BODY_BYTES`` 约 10 分钟录音的 CPU 推理时间上界）
+- 请求入队即带超时预算：v1.4 起按音频时长动态计算
+  （``timeout = max(infer_timeout_s 基础值, 音频秒 × RTF保守值 × 安全系数)``，
+  静态标定必然随音频时长失准；切换任务仍用基础值——兼作模型下载预算）
 - 队列积压超阈值（``Settings.queue_max_pending``）直接拒绝（2002）
 - worker 单线程串行执行推理与模型切换，二者天然互斥（选型三的切换锁免费获得）
 
@@ -10,16 +11,24 @@
 - 推理超时 → 4002（message 注明 ``timeout``）
 - 队列满 / 切换中收到 recognize → 2002
 - 目标不在注册表 → 3001；加载失败 → 3002；自检失败回滚 → 3003
+- 引擎能力上限（EngineLimitError）→ 4001（message 注明 ``engine_limit``）
 """
 
 import queue
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
-from zen_vocotype_service.config import Settings
+from zen_vocotype_protocol.paths import DEFAULT_SAMPLE_RATE, DEFAULT_SAMPLE_WIDTH
+
+from zen_vocotype_service.config import DEFAULT_RTF_ESTIMATE, Settings
 from zen_vocotype_service.logging_setup import logger
-from zen_vocotype_service.models.loader import pcm_to_float_array, run_inference
+from zen_vocotype_service.models.loader import (
+    pcm_to_float_array,
+    run_inference,
+    run_inference_file,
+)
 from zen_vocotype_service.models.manager import ModelManager
 
 #: worker 从队列取任务的阻塞超时（秒）：周期性检查停止标志
@@ -36,10 +45,15 @@ class TaskTimeoutError(Exception):
 
 @dataclass
 class _Task:
-    """入队任务：kind 为 recognize / switch；result 回传 (ok, value)。"""
+    """入队任务：kind 为 recognize / recognize_file / switch；result 回传 (ok, value)。
+
+    ``timeout_s`` 为 per-task 超时预算（v1.4 动态化）：提交方按音频时长算好，
+    ``_submit`` 等待与 GGUF 子进程超时均使用本值。
+    """
 
     kind: str
     arg: Any
+    timeout_s: float
     done: threading.Event = field(default_factory=threading.Event)
     ok: bool = False
     value: Any = None
@@ -89,23 +103,67 @@ class InferenceWorker:
                 f"{self._settings.queue_max_pending}"
             )
         self._queue.put(task)
-        if not task.done.wait(timeout=self._settings.infer_timeout_s):
+        if not task.done.wait(timeout=task.timeout_s):
             raise TaskTimeoutError(
-                f"任务 {task.kind} 超时（预算 {self._settings.infer_timeout_s}s）"
+                f"任务 {task.kind} 超时（预算 {task.timeout_s:.0f}s）"
             )
         if not task.ok:
             raise task.value
         return task.value
 
+    def _calc_recognize_timeout(self, pcm_bytes: int) -> float:
+        """按音频时长动态计算识别超时（公式单一出处）。
+
+        ``timeout = max(infer_timeout_s 基础值, 音频秒 × RTF保守值 × 安全系数)``；
+        RTF 取当前模型条目 ``rtf_estimate``，未标定取保守缺省。
+        """
+        seconds = pcm_bytes / (DEFAULT_SAMPLE_RATE * DEFAULT_SAMPLE_WIDTH)
+        rtf = DEFAULT_RTF_ESTIMATE
+        current = self._manager.current
+        if current is not None and current.entry.rtf_estimate is not None:
+            rtf = current.entry.rtf_estimate
+        return max(
+            self._settings.infer_timeout_s,
+            seconds * rtf * self._settings.rtf_safety_factor,
+        )
+
     def submit_recognize(self, pcm: bytes) -> dict:
-        """入队识别请求，返回 ``{"text", "confidence", "duration_ms"}``。"""
-        return self._submit(_Task(kind="recognize", arg=pcm))
+        """入队识别请求，返回 ``{"text", "confidence", "duration_ms"}``
+        （引擎支持时追加 ``segments``/``language``）。"""
+        return self._submit(
+            _Task(
+                kind="recognize",
+                arg=pcm,
+                timeout_s=self._calc_recognize_timeout(len(pcm)),
+            )
+        )
+
+    def submit_recognize_file(self, wav_path: Path, pcm_bytes: int) -> dict:
+        """入队会话 WAV 识别（audio_chunk end 路径），返回结构同 ``submit_recognize``。
+
+        :param wav_path: 会话 WAV 路径（funasr-gguf 直喂 CLI；其他引擎读回转 float32）
+        :param pcm_bytes: 会话累计 PCM 字节数（时长/超时计算依据）
+        """
+        return self._submit(
+            _Task(
+                kind="recognize_file",
+                arg=(wav_path, pcm_bytes),
+                timeout_s=self._calc_recognize_timeout(pcm_bytes),
+            )
+        )
 
     def submit_switch(self, model_name: str) -> None:
         """入队模型切换（与推理天然互斥）；提交即置切换标记。"""
         self._switching.set()
         try:
-            return self._submit(_Task(kind="switch", arg=model_name))
+            # 切换任务用基础值预算：兼作首次切换未缓存大模型的下载时间覆盖
+            return self._submit(
+                _Task(
+                    kind="switch",
+                    arg=model_name,
+                    timeout_s=self._settings.infer_timeout_s,
+                )
+            )
         except Exception:
             # 入队失败（满队列/超时）：任务未执行，清除标记
             self._switching.clear()
@@ -123,7 +181,9 @@ class InferenceWorker:
                 continue
             try:
                 if task.kind == "recognize":
-                    task.value = self._do_recognize(task.arg)
+                    task.value = self._do_recognize(task.arg, task.timeout_s)
+                elif task.kind == "recognize_file":
+                    task.value = self._do_recognize_file(task.arg, task.timeout_s)
                 elif task.kind == "switch":
                     task.value = self._do_switch(task.arg)
                 else:
@@ -135,18 +195,38 @@ class InferenceWorker:
             finally:
                 task.done.set()
 
-    def _do_recognize(self, pcm: bytes) -> dict:
+    @staticmethod
+    def _build_payload(outcome: dict, duration_ms: int) -> dict:
+        """识别结果 → 协议 payload（segments/language 纯追加，给不出即省略）。"""
+        payload = {
+            "text": outcome["text"],
+            "confidence": outcome["confidence"],
+            "duration_ms": duration_ms,
+        }
+        if outcome.get("segments"):
+            payload["segments"] = outcome["segments"]
+        if outcome.get("language"):
+            payload["language"] = outcome["language"]
+        return payload
+
+    def _do_recognize(self, pcm: bytes, timeout_s: float) -> dict:
         current = self._manager.current
         if current is None:
             raise RuntimeError("模型未加载")
         audio = pcm_to_float_array(pcm)
         duration_ms = len(pcm) // 2 * 1000 // 16000
-        outcome = run_inference(current, audio)
-        return {
-            "text": outcome["text"],
-            "confidence": outcome["confidence"],
-            "duration_ms": duration_ms,
-        }
+        outcome = run_inference(current, audio, timeout_s=timeout_s)
+        return self._build_payload(outcome, duration_ms)
+
+    def _do_recognize_file(self, arg: tuple, timeout_s: float) -> dict:
+        """audio_chunk end：会话 WAV 识别（GGUF 直喂，其他引擎读回转 float32）。"""
+        wav_path, pcm_bytes = arg
+        current = self._manager.current
+        if current is None:
+            raise RuntimeError("模型未加载")
+        duration_ms = pcm_bytes // 2 * 1000 // 16000
+        outcome = run_inference_file(current, wav_path, timeout_s=timeout_s)
+        return self._build_payload(outcome, duration_ms)
 
     def _do_switch(self, model_name: str) -> None:
         try:

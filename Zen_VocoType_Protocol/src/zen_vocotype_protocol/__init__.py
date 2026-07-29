@@ -4,6 +4,6 @@
 禁止三组件文件夹之间任何形式的相对路径 import。
 """
 
-from zen_vocotype_protocol import actions, errors, frames, paths, settings, version
+from zen_vocotype_protocol import actions, chunk, errors, frames, paths, settings, version
 
-__all__ = ["actions", "errors", "frames", "paths", "settings", "version"]
+__all__ = ["actions", "chunk", "errors", "frames", "paths", "settings", "version"]

@@ -5,4 +5,4 @@
 pyproject.toml 经 hatch pattern 动态读取本值。
 """
 
-LAUNCHER_VERSION: str = "1.3"
+LAUNCHER_VERSION: str = "1.4"

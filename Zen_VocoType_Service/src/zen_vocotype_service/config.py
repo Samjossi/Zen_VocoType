@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from zen_vocotype_protocol.paths import (
+    DEFAULT_CHUNK_SESSION_DIR,
     DEFAULT_LOG_DIR,
     DEFAULT_MODELS_DIR,
     DEFAULT_SOCKET_PATH,
@@ -29,10 +30,12 @@ COMPONENT_ROOT: Path = component_root(__file__)
 #: 默认配置文件路径
 CONFIG_FILE: Path = COMPONENT_ROOT / "config.yaml"
 
-#: 推理超时预算默认值（秒）。依据：协议 ``MAX_BODY_BYTES`` 约合 10 分钟录音，
+#: 推理超时基础值（秒）。v1.4 起语义为「基础值/模型切换预算」：
+#: 识别超时按音频时长动态计算（timeout = max(本值, 音频秒 × RTF × 安全系数），
+#: 本值兜底短音频与模型切换（首次切换未缓存大模型的下载时间亦被覆盖）。
+#: 历史标定依据：协议 ``MAX_BODY_BYTES`` 约合 10 分钟录音，
 #: 默认引擎 fun-asr-nano 分钟级长音频实测 RTF≈0.27（2026-07-23，165.7s 音频
-#: 推理 45.2s），10 分钟录音推理 ≈164s，本值 = 164s × 安全系数 1.8 取整；
-#: 附带收益：模型切换共用本预算，首次切换未缓存大模型的下载时间亦被覆盖
+#: 推理 45.2s），10 分钟录音推理 ≈164s，本值 = 164s × 安全系数 1.8 取整
 DEFAULT_INFER_TIMEOUT_S: float = 300.0
 
 #: 推理队列积压阈值（选型四）：超过即拒绝新请求返回 2002，防不可预期延迟
@@ -40,6 +43,20 @@ DEFAULT_QUEUE_MAX_PENDING: int = 4
 
 #: 连接数上限（选型一）：防御性限制，正常仅 1 客户端长连接 + Launcher 探测
 DEFAULT_MAX_CONNECTIONS: int = 8
+
+#: audio_chunk 会话累计 PCM 上限（字节）：256MB ≈ 2.2 小时 16kHz/16bit/单声道，
+#: 覆盖「单段 ≥2 小时」目标并留余量；超限 → 4004 并销毁会话
+DEFAULT_CHUNK_SESSION_MAX_BYTES: int = 256 * 1024 * 1024
+
+#: audio_chunk 会话空闲超时（秒）：超时未收到新帧即销毁（惰性 + 周期兜底）
+DEFAULT_CHUNK_SESSION_IDLE_TIMEOUT_S: float = 120.0
+
+#: 超时动态化安全系数：timeout = 音频秒 × RTF × 本系数。
+#: 标定依据：RTF 实测为均值，CPU 争抢/长段劣化需余量，取 2 倍保守
+DEFAULT_RTF_SAFETY_FACTOR: float = 2.0
+
+#: 用户自建模型条目未标定 rtf_estimate 时的保守缺省（慢于实时假设，宁大勿小）
+DEFAULT_RTF_ESTIMATE: float = 1.0
 
 
 class ModelEntry(BaseModel):
@@ -54,6 +71,9 @@ class ModelEntry(BaseModel):
     #: 引擎类型：加载/推理分支的唯一依据（loader/worker 各一处 if）。
     #: 默认 "funasr"，现有条目与用户旧配置零感知
     engine_type: Literal["funasr", "qwen3-asr", "funasr-gguf"] = "funasr"
+    #: RTF 保守标定（推理耗时 / 音频时长）：超时动态化公式的引擎参数。
+    #: None 时取 ``DEFAULT_RTF_ESTIMATE`` 保守缺省；内置注册表三条目已标定
+    rtf_estimate: float | None = None
     #: 引擎特定加载附加参数：
     #: funasr → 原样并入 AutoModel()（例：Fun-ASR-Nano 的 trust_remote_code/remote_code）
     #: qwen3-asr → 原样并入 Qwen3ASRModel.from_pretrained()
@@ -87,6 +107,9 @@ DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
     "fun-asr-nano": {
         "model_id": "FunAudioLLM/Fun-ASR-Nano-GGUF",
         "engine_type": "funasr-gguf",
+        "rtf_estimate": 0.2,  # 实测 0.08–0.12，取保守上限
+        # （2026-07-30 长音频抽测：31 分钟合成语音 RTF=0.139，仍被 0.2 覆盖，
+        # 见 Zen_VocoType_Service/logs/long_audio_measurements.json）
         "extra_params": {
             "encoder": "funasr-encoder-f16.gguf",
             "llm": "qwen3-0.6b-q8_0.gguf",
@@ -101,12 +124,14 @@ DEFAULT_MODEL_REGISTRY: dict[str, dict] = {
     "sensevoice-small": {
         "model_id": "iic/SenseVoiceSmall",
         "vad_model_id": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "rtf_estimate": 0.3,  # sensevoice 实测远快（10s 音频约 70ms），保守取
         "description": "多语言语音理解：中/粤/英/日/韩等 50+ 语种，"
         "兼具情感识别与声音事件检测；推理极快（10 秒音频约 70ms）。",
     },
     "qwen3-asr-1.7b": {
         "model_id": "Qwen/Qwen3-ASR-1.7B",
         "engine_type": "qwen3-asr",
+        "rtf_estimate": 1.5,  # 实测 ≈1.2；受引擎 20 分钟上限约束，实际不会算出过大值
         "description": "高精度多语言识别（阿里 Qwen 2026-01，1.7B）。开源 ASR SOTA："
         "30 种语言 + 22 种中文方言，支持热词/上下文增强与最长 20 分钟单条音频，"
         "复杂声学环境与歌声识别强。⚠️ CPU 实测 RTF≈1.2（慢于实时），"
@@ -129,9 +154,21 @@ class Settings(ComponentSettings):
     log_dir: Path = DEFAULT_LOG_DIR
 
     models: dict[str, ModelEntry] = DEFAULT_MODEL_REGISTRY
+    #: 推理超时基础值/模型切换预算（识别超时按音频时长动态计算，见类上方注释）
     infer_timeout_s: float = DEFAULT_INFER_TIMEOUT_S
     queue_max_pending: int = DEFAULT_QUEUE_MAX_PENDING
     max_connections: int = DEFAULT_MAX_CONNECTIONS
+
+    #: audio_chunk 会话累计 PCM 上限（字节），超限 → 4004
+    chunk_session_max_bytes: int = DEFAULT_CHUNK_SESSION_MAX_BYTES
+    #: audio_chunk 会话空闲超时（秒）
+    chunk_session_idle_timeout_s: float = DEFAULT_CHUNK_SESSION_IDLE_TIMEOUT_S
+    #: audio_chunk 会话临时 WAV 目录。默认 XDG data（契约库唯一出处）；
+    #: 🔴 禁止指向 tmpfs/runtime——tmpfs 即内存，长音频会话 WAV（2h ≈ 230MB）
+    #: 会重现全量内存驻留问题
+    chunk_session_dir: Path = DEFAULT_CHUNK_SESSION_DIR
+    #: 超时动态化安全系数（timeout = 音频秒 × RTF × 本系数）
+    rtf_safety_factor: float = DEFAULT_RTF_SAFETY_FACTOR
 
     #: 托盘状态轮询间隔（毫秒）。状态转换为人感知秒级，500ms 刷新足够灵敏且零压力
     tray_poll_interval_ms: int = Field(default=500, ge=100)

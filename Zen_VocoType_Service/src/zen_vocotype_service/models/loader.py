@@ -5,7 +5,8 @@
 - 显式 ``disable_update=True`` 防在线检查拖慢启动
 - 加载失败抛带真实原因的 ``ModelLoadError``，🔴 无任何假模型兜底
 - 自检以内置真实语音 PCM 跑一次推理（🔴 禁止空输入假装自检），
-  仅验证「推理通路可用 + 返回结构合法」，不验证识别质量
+  仅验证「推理通路可用 + 返回结构合法」（``text`` 为字符串即通过；
+  v1.4 追加的 ``segments``/``language`` 为可选字段，给不出即省略，不校验）
 
 ⚠️ import 顺序敏感：``MODELSCOPE_CACHE`` 必须在 import funasr/modelscope
 之前设置（入口 main.py 第一行，单测固化）；本模块函数内延迟导入作为
@@ -46,10 +47,15 @@ GGUF_DEFAULT_ENCODER = "funasr-encoder-f16.gguf"
 GGUF_DEFAULT_LLM = "qwen3-0.6b-q8_0.gguf"
 GGUF_DEFAULT_VAD_REPO = "FunAudioLLM/fsmn-vad-GGUF"
 GGUF_DEFAULT_VAD = "fsmn-vad.gguf"
-#: GGUF 子进程超时（秒）：worker 提交侧 infer_timeout_s 只解除调用方等待，
-#: 子进程自身必须兜底防挂死卡占 worker 线程；GGUF 实测 RTF≈0.08 下
-#: 10 分钟录音（协议上限）约 48s，本值留 >5 倍余量
+#: GGUF 子进程超时基础值（秒）：v1.4 起为动态超时的基础值
+#:（timeout = max(本值, 音频秒 × RTF × 安全系数），worker 提交侧算好传入；
+#: 未传入时（如自检）取本值兜底。子进程必须兜底防挂死卡占 worker 线程。
+#: 历史标定：GGUF 实测 RTF≈0.08 下 10 分钟录音（协议上限）约 48s，本值留 >5 倍余量
 GGUF_SUBPROCESS_TIMEOUT_S = 300.0
+
+#: qwen3-asr 引擎单段音频上限（秒）：模型自身能力上限 20 分钟，
+#: 超限 → EngineLimitError → 4001（message 注明 engine_limit，🔴 禁止静默截断）
+QWEN3_MAX_AUDIO_SECONDS: float = 20 * 60
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,10 @@ class GgufRuntime:
 
 class ModelLoadError(Exception):
     """模型加载/自检失败，message 含真实原因。"""
+
+
+class EngineLimitError(Exception):
+    """引擎能力上限（如 qwen3-asr 单段 20 分钟）→ 4001，message 注明 engine_limit。"""
 
 
 class LoadedModel:
@@ -212,78 +222,192 @@ def pcm_to_float_array(pcm: bytes):
     return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / PCM_NORMALIZE
 
 
-def run_inference(loaded: LoadedModel, audio) -> dict:
+def wav_to_float_array(wav_path: Path):
+    """读取会话 WAV（16kHz/16bit/单声道）转 float32 归一化数组（funasr/qwen3 用）。"""
+    with wave.open(str(wav_path), "rb") as wav_file:
+        frames = wav_file.readframes(wav_file.getnframes())
+    return pcm_to_float_array(frames)
+
+
+def _check_engine_limit(entry: ModelEntry, audio_seconds: float) -> None:
+    """引擎能力上限校验（🔴 禁止静默截断）。
+
+    :raises EngineLimitError: qwen3-asr 单段音频超 20 分钟
+    """
+    if entry.engine_type == "qwen3-asr" and audio_seconds > QWEN3_MAX_AUDIO_SECONDS:
+        raise EngineLimitError(
+            f"engine_limit: qwen3-asr 单段音频上限 "
+            f"{QWEN3_MAX_AUDIO_SECONDS / 60:.0f} 分钟，本段 {audio_seconds / 60:.1f} 分钟"
+        )
+
+
+def run_inference(loaded: LoadedModel, audio, timeout_s: float | None = None) -> dict:
     """对已加载模型跑一次推理（引擎类型分支唯一推理点）。
 
     :param audio: float32 归一化数组（``pcm_to_float_array`` 产物）
-    :return: ``{"text", "confidence"}``；confidence 模型不给时为 None（🔴 禁止编造）
+    :param timeout_s: 子进程超时预算（仅 funasr-gguf 使用；None 取基础值兜底）
+    :return: ``{"text", "confidence"}`` + 引擎支持时追加 ``"segments"`` /
+        ``"language"``（给不出则省略，🔴 禁止编造）；
+        confidence 模型不给时为 None
+    :raises EngineLimitError: 引擎能力上限（→ 4001）
     :raises RuntimeError: 推理失败或返回结构非法
     """
     if loaded.entry.engine_type == "qwen3-asr":
+        _check_engine_limit(loaded.entry, len(audio) / DEFAULT_SAMPLE_RATE)
         results = loaded.model.transcribe(audio=(audio, DEFAULT_SAMPLE_RATE))
         if not results:
             raise RuntimeError("推理返回结构非法: 空结果列表")
         return {"text": results[0].text, "confidence": None}
     if loaded.entry.engine_type == "funasr-gguf":
-        return _run_funasr_gguf(loaded.model, audio)
-    result = loaded.model.generate(input=audio, cache={}, batch_size_s=60)
+        return _run_funasr_gguf(loaded.model, audio=audio, timeout_s=timeout_s)
+    return _run_funasr(loaded.model, audio)
+
+
+def run_inference_file(
+    loaded: LoadedModel, wav_path: Path, timeout_s: float | None = None
+) -> dict:
+    """对会话 WAV 文件跑一次推理（audio_chunk end 路径）。
+
+    funasr-gguf 直喂 WAV 给 CLI（跳过 PCM→float32→int16→WAV 往返）；
+    funasr / qwen3-asr 读回转 float32 走内存推理。返回结构同 ``run_inference``。
+
+    :raises EngineLimitError: 引擎能力上限（→ 4001）
+    :raises RuntimeError: 推理失败或返回结构非法
+    """
+    if loaded.entry.engine_type == "funasr-gguf":
+        with wave.open(str(wav_path), "rb") as wav_file:
+            seconds = wav_file.getnframes() / wav_file.getframerate()
+        logger.info("GGUF 直喂会话 WAV（{:.1f} 秒）: {}", seconds, wav_path)
+        return _run_funasr_gguf(loaded.model, wav_path=wav_path, timeout_s=timeout_s)
+    audio = wav_to_float_array(wav_path)
+    return run_inference(loaded, audio, timeout_s=timeout_s)
+
+
+def _run_funasr(model, audio) -> dict:
+    """funasr 引擎推理：generate + 时间戳分段（sentence_timestamp）+ 语种提取。"""
+    try:
+        result = model.generate(
+            input=audio, cache={}, batch_size_s=60, sentence_timestamp=True
+        )
+    except TypeError:
+        # 个别 funasr 模型不支持 sentence_timestamp 参数：回退无参并记日志
+        #（非静默——segments 字段随结果省略，符合「给不出则省略」约定）
+        logger.warning("当前 funasr 模型不支持 sentence_timestamp，segments 将省略")
+        result = model.generate(input=audio, cache={}, batch_size_s=60)
     if not isinstance(result, list) or not result or "text" not in result[0]:
         raise RuntimeError(f"推理返回结构非法: {type(result).__name__}")
     item = result[0]
     text = item["text"]
+    outcome: dict = {"text": text, "confidence": item.get("confidence")}
     if "<|" in text:
-        # SenseVoice 元标签（语种/情感/事件/ITN，如 <|zh|><|HAPPY|><|Speech|><|woitn|>）
-        # 官方后处理：剥除语种/ITN 标记，情感/事件转 emoji（该引擎的差异化能力）；
-        # 干净文本（paraformer/fun-asr-nano）不进入此分支，零影响
+        # SenseVoice 元标签（语种/情感/事件/ITN，如 <|zh|><|HAPPY|><|Speech|><|woitn|>）：
+        # 首标签即语种码 → language；官方后处理剥除语种/ITN 标记、
+        # 情感/事件转 emoji；干净文本（paraformer/fun-asr-nano）不进入此分支，零影响
+        language = _extract_sensevoice_language(text)
+        if language:
+            outcome["language"] = language
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
-        text = rich_transcription_postprocess(text)
-    return {"text": text, "confidence": item.get("confidence")}
+        outcome["text"] = rich_transcription_postprocess(text)
+    segments = _parse_sentence_segments(item)
+    if segments:
+        outcome["segments"] = segments
+    return outcome
 
 
-def _run_funasr_gguf(runtime: GgufRuntime, audio) -> dict:
-    """GGUF 子进程推理：float32 数组 → 临时 WAV → llama-funasr-cli → 文本。
+def _extract_sensevoice_language(text: str) -> str | None:
+    """从 SenseVoice 原始输出提取首元标签作为语种码（给不出返回 None）。"""
+    import re
+
+    match = re.match(r"^\s*<\|([A-Za-z]+)\|>", text)
+    return match.group(1) if match else None
+
+
+def _parse_sentence_segments(item: dict) -> list[dict]:
+    """解析 funasr sentence_timestamp 输出为协议 segments 结构。
+
+    防御性解析：字段缺失/结构不符即返回空表（字段整体省略，🔴 禁止编造）。
+    """
+    segments: list[dict] = []
+    for seg in item.get("sentence_info") or []:
+        if not isinstance(seg, dict):
+            continue
+        start, end, seg_text = seg.get("start"), seg.get("end"), seg.get("text")
+        if isinstance(start, (int, float)) and isinstance(end, (int, float)) and isinstance(seg_text, str):
+            segments.append(
+                {"start_ms": int(start), "end_ms": int(end), "text": seg_text}
+            )
+    return segments
+
+
+def _run_funasr_gguf(
+    runtime: GgufRuntime,
+    audio=None,
+    wav_path: Path | None = None,
+    timeout_s: float | None = None,
+) -> dict:
+    """GGUF 子进程推理：WAV → llama-funasr-cli → 文本。
+
+    两种输入（二选一）：
+
+    - ``wav_path``：会话 WAV 直喂 CLI（audio_chunk end 路径，跳过
+      PCM→float32→int16→WAV 往返），文件由调用方管理，本函数不删除
+    - ``audio``：float32 数组 → 临时 WAV → CLI（recognize 单帧/自检路径），
+      临时 WAV 用完即删（加载期另有目录级清理兜底）
 
     CLI 行为（v0.1.4 实测固化）：stdout 只含识别文本，日志全走 stderr；
     退出码 0=成功，非 0=失败（原因在 stderr）。静默音频返回空文本属
-    合法结果（与现有引擎语义一致）。临时 WAV 用完即删（加载期另有
-    目录级清理兜底，见 ``_load_funasr_gguf``）。
+    合法结果。CLI 无时间戳输出能力（2026-07-30 调研：usage 无相关选项、
+    实测 stdout 纯文本），故本引擎不产出 ``segments``（禁止编造，字段省略）。
+
+    临时 WAV 目录评估结论（2026-07-30）：短帧路径（≤10 分钟 ≈ 19MB）保留
+    XDG runtime 层——tmpfs 写盘零磁盘磨损且 19MB 内存可承受；长音频路径
+    经会话 WAV 直喂不经过本目录，tmpfs 内存驻留问题已消除，无需迁移。
     """
+    if wav_path is None and audio is None:
+        raise RuntimeError("_run_funasr_gguf 需要 audio 或 wav_path 之一")
+    timeout = timeout_s if timeout_s is not None else GGUF_SUBPROCESS_TIMEOUT_S
+    if wav_path is not None:
+        return _invoke_gguf_cli(runtime, wav_path, timeout)
+
     import numpy as np
 
     tmp_dir = _gguf_tmp_dir()
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    wav_path = tmp_dir / f"{uuid.uuid4().hex}.wav"
+    tmp_wav = tmp_dir / f"{uuid.uuid4().hex}.wav"
     try:
         pcm16 = np.clip(audio * PCM_NORMALIZE, -32768, 32767).astype(np.int16)
-        with wave.open(str(wav_path), "wb") as wav_file:
+        with wave.open(str(tmp_wav), "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
             wav_file.setframerate(DEFAULT_SAMPLE_RATE)
             wav_file.writeframes(pcm16.tobytes())
-        try:
-            proc = subprocess.run(
-                [
-                    str(runtime.cli),
-                    "--enc", str(runtime.encoder),
-                    "-m", str(runtime.llm),
-                    "--vad", str(runtime.vad),
-                    "-a", str(wav_path),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=GGUF_SUBPROCESS_TIMEOUT_S,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"GGUF CLI 超时（>{GGUF_SUBPROCESS_TIMEOUT_S:.0f}s）"
-            ) from exc
-        if proc.returncode != 0:
-            tail = " | ".join((proc.stderr or "").strip().splitlines()[-3:])
-            raise RuntimeError(f"GGUF CLI 失败(rc={proc.returncode}): {tail}")
-        return {"text": proc.stdout.strip(), "confidence": None}
+        return _invoke_gguf_cli(runtime, tmp_wav, timeout)
     finally:
-        wav_path.unlink(missing_ok=True)
+        tmp_wav.unlink(missing_ok=True)
+
+
+def _invoke_gguf_cli(runtime: GgufRuntime, wav_path: Path, timeout: float) -> dict:
+    """调起 llama-funasr-cli 子进程并解析结果（成功/失败/超时的唯一出口）。"""
+    try:
+        proc = subprocess.run(
+            [
+                str(runtime.cli),
+                "--enc", str(runtime.encoder),
+                "-m", str(runtime.llm),
+                "--vad", str(runtime.vad),
+                "-a", str(wav_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"GGUF CLI 超时（>{timeout:.0f}s）") from exc
+    if proc.returncode != 0:
+        tail = " | ".join((proc.stderr or "").strip().splitlines()[-3:])
+        raise RuntimeError(f"GGUF CLI 失败(rc={proc.returncode}): {tail}")
+    return {"text": proc.stdout.strip(), "confidence": None}
 
 
 def selftest(loaded: LoadedModel) -> None:
