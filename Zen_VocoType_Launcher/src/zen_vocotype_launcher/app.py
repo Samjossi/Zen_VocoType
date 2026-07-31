@@ -14,6 +14,8 @@
 - 三个延迟设置 + 组件位置设置：「校验 → 先落盘 → 后切内存 → 刷标签 → 通知」
   （T33/T35 模板；落盘走契约库 ``set_user_config_value``，🔴 禁止写包内
   config.yaml——AppImage 只读挂载点）
+- 登录自启动（T45 XDG Autostart）：启动时清理遗留条目并以配置为准做一致性
+  校验；勾选态热切换与上同模板，失败整体回滚（配置与 desktop 文件不分叉）
 - 无显示环境探测：``QApplication`` 创建前检查 DISPLAY/WAYLAND_DISPLAY
   （headless 下 Qt 可能 SIGABRT 硬崩而非抛异常，🔴 必须先探测后创建）
 """
@@ -30,7 +32,9 @@ from loguru import logger
 from zen_vocotype_protocol.paths import CLIENT_LOCK_PATH, SERVICE_LOCK_PATH
 from zen_vocotype_protocol.user_config import set_user_config_value
 
+from zen_vocotype_launcher.autostart import AutostartManager
 from zen_vocotype_launcher.config import (
+    AUTOSTART_ENV_VAR,
     CLIENT_BINARY_ENV_VAR,
     CLIENT_START_INTERVAL_ENV_VAR,
     EXIT_AFTER_SUCCESS_ENV_VAR,
@@ -147,7 +151,9 @@ class LauncherTrayApp:
         self._busy = False
 
         self._tray = LauncherTray()
+        self._autostart_mgr = AutostartManager()
         self._init_labels()
+        self._init_autostart()
         self._connect_signals()
 
         # 编排线程桥（Signal 持有于 self，🔴 防 GC；显式 QueuedConnection——
@@ -190,6 +196,26 @@ class LauncherTrayApp:
         self._tray.set_service_binary_label(s.service_binary)
         self._tray.set_client_binary_label(s.client_binary)
 
+    def _init_autostart(self) -> None:
+        """自启动初始化（T45）：遗留清理 → 一致性校验（配置为准）→ 勾选态注入。
+
+        平台不支持（非 Linux）时仅禁用菜单项；支持时先清理历史遗留条目
+        （下划线旧名，白名单制），再以配置为准修复 desktop 文件状态。
+        """
+        if not AutostartManager.is_supported():
+            self._tray.set_autostart_supported(False)
+            return
+        removed = self._autostart_mgr.remove_legacy_desktop_files()
+        if removed:
+            logger.info("已清理历史遗留自启动条目：{}", [str(p) for p in removed])
+        enabled = self._settings.autostart_enabled
+        if enabled != self._autostart_mgr.is_enabled():
+            if self._autostart_mgr.set_enabled(enabled):
+                logger.info("自启动一致性校验：按配置修复为 {}", enabled)
+            else:
+                logger.warning("自启动一致性校验：修复失败（目标状态 {}）", enabled)
+        self._tray.set_autostart_checked(enabled)
+
     def _connect_signals(self) -> None:
         t = self._tray
         t.start_requested.connect(self._on_start)
@@ -197,6 +223,7 @@ class LauncherTrayApp:
         t.service_delay_change_requested.connect(self._on_change_service_delay)
         t.client_interval_change_requested.connect(self._on_change_client_interval)
         t.auto_exit_change_requested.connect(self._on_change_auto_exit)
+        t.autostart_change_requested.connect(self._on_change_autostart)
         t.service_binary_change_requested.connect(self._on_change_service_binary)
         t.service_binary_reset_requested.connect(self._on_reset_service_binary)
         t.client_binary_change_requested.connect(self._on_change_client_binary)
@@ -454,6 +481,37 @@ class LauncherTrayApp:
             self._apply_delay(
                 "exit_after_success_s", value, EXIT_AFTER_SUCCESS_ENV_VAR, "成功后自动退出"
             )
+
+    # ------------------------------------------------------------------
+    # 自启动开关（T45；同 T33/T35 模板：先落盘 → 切系统条目 → 后切内存 → 通知；
+    # 🔴 任一步失败整体回滚，配置与 desktop 文件两端不得分叉）
+    # ------------------------------------------------------------------
+
+    def _on_change_autostart(self, checked: bool) -> None:
+        """勾选态热切换：落盘与 desktop 文件双写，失败回滚勾选态与配置。"""
+        try:
+            set_user_config_value("autostart_enabled", checked)
+        except OSError as exc:
+            logger.error("配置写入失败（autostart_enabled）：{}", exc)
+            self._notify("设置未生效", f"配置写入失败：{exc}")
+            self._tray.set_autostart_checked(not checked)  # 回滚勾选态
+            return
+        if not self._autostart_mgr.set_enabled(checked):
+            logger.error("自启动 desktop 文件写入失败（目标状态 {}）", checked)
+            self._notify("设置未生效", "自启动条目写入失败，已恢复原设置")
+            self._tray.set_autostart_checked(not checked)  # 回滚勾选态
+            try:  # 回滚配置（🔴 两端不得分叉；回滚失败仅记日志）
+                set_user_config_value("autostart_enabled", not checked)
+            except OSError as exc:
+                logger.error("自启动配置回滚失败：{}", exc)
+            return
+        setattr(self._settings, "autostart_enabled", checked)
+        shown = "已启用" if checked else "已禁用"
+        self._notify(
+            "设置已更新",
+            f"登录后自动启动启动器{shown}{_env_override_suffix(AUTOSTART_ENV_VAR)}",
+        )
+        logger.info("autostart_enabled 已更新：{}（已持久化并写入自启动条目）", checked)
 
     # ------------------------------------------------------------------
     # 组件位置设置（校验：存在 + 是文件 + 可执行；🔴 非法拒绝落盘）

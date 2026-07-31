@@ -38,6 +38,8 @@ Service：●运行中   Client：○未运行      ◄── 状态行（实时
 客户端启动间隔（0 秒）…                 ◄── 服务端拉起后隔多少秒拉起客户端
 成功后自动退出（60 秒）…                ◄── 观察窗口（30~300，T44 单一定时器）
 ─────────────────────────────
+☐ 登录后自动启动启动器                 ◄── 勾选态（T45，仅 Linux）
+─────────────────────────────
 Service 位置：未设置（自动）… / 恢复 Service 自动解析
 Client 位置：未设置（自动）… / 恢复 Client 自动解析
 ─────────────────────────────
@@ -51,6 +53,28 @@ Client 位置：未设置（自动）… / 恢复 Client 自动解析
   （文件对话框选择 AppImage 或 onedir 内二进制，校验可执行位，非法拒绝落盘）
 - **失败不自动退出**：编排失败托盘停留（状态行错误 + 通知），可调整设置后经
   「立即启动」重试；🔴 「退出启动器」不终止已启动的两端（选型七红线）
+
+## 登录自启动（T45，XDG Autostart）
+
+托盘勾选「登录后自动启动启动器」后，下次登录桌面环境时自动拉起 Launcher
+（Launcher 再按本职编排拉起 Service 与 Client）。🔴 自启入口唯一为
+Launcher——Service / Client 不单独注册自启动，避免三端启动顺序失控。
+
+- **机制**：维护 `$XDG_CONFIG_HOME/autostart/zen-vocotype.desktop`
+  （缺省 `~/.config/autostart/`），纯文件操作，无需 root / systemd / IPC；
+  仅 Linux（其余平台菜单项禁用并标注「仅 Linux 支持」）
+- **行为**：勾选 → 写入条目（`Hidden=false`）；取消勾选 → 条目保留但置
+  `Hidden=true`（用户自定义行不丢）。每次启动时以配置 `autostart_enabled`
+  为准做一致性校验（配置启用而条目缺失会重建），并清理历史遗留的下划线
+  旧名条目（`zen_vocotype.desktop`，白名单制，不扫描不猜测）
+- **Exec 三档**：AppImage（`$APPIMAGE`）→ onedir 打包（`sys.frozen`）→
+  开发模式（`.venv` Python + 组件根 `main.py`）；条目随每次启动校验按当前
+  形态重写——dev/prod 切换后在目标形态下重启一次 Launcher 即自动纠偏
+- **命名口径**：desktop ID `zen-vocotype` 与 T43 安装器
+  （`tools/desktop_entry.py` 的 `DESKTOP_ID`）同值（唯一出处在安装器）；
+  安装器卸载时恒删该条目，与运行时行为对称
+- **彻底移除**：删除条目可经 `AutostartManager.remove_desktop_file()`，
+  或手动删除上述 `.desktop` 文件
 
 ## 编排流程（T40 调整）
 
@@ -103,6 +127,7 @@ Client 位置：未设置（自动）… / 恢复 Client 自动解析
 | `client_start_interval_s` | 0 | T40：服务端拉起后隔多少秒拉起客户端（0~300；托盘菜单可设） |
 | `exit_after_success_s` | 60 | T44：编排成功后托盘停留秒数（30~300；仅托盘模式有效；🔴 失败路径不自动退出；设置对话框打开期间倒计时暂停——显式实现，不依赖 GNOME 上不可靠的 SNI 菜单事件） |
 | `client_settle_timeout_s` | 10 | T42：本进程拉起客户端后的存活确认窗口秒数（0~120，0=关闭）；窗口内进程死亡判定退出码 4（修复「AppImage 引导数秒后崩溃仍报启动完成」误报）；🔴 既有实例幂等命中不适用（零附加等待） |
+| `autostart_enabled` | false | T45：登录桌面环境后自动启动 Launcher（托盘勾选项可热切换；仅 Linux） |
 | `log_dir` | 契约库 `paths.DEFAULT_LOG_DIR`（`$XDG_STATE_HOME/zen_vocotype/logs`，回退 `~/.local/state/...`） | 日志目录（阶段 4 T4.1 迁 XDG） |
 
 ## 目标解析（正式模式）

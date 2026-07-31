@@ -33,6 +33,7 @@ CLIENT_START_INTERVAL_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_CLIENT_START_INTERVAL_S"
 EXIT_AFTER_SUCCESS_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_EXIT_AFTER_SUCCESS_S"
 SERVICE_BINARY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_SERVICE_BINARY"
 CLIENT_BINARY_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_CLIENT_BINARY"
+AUTOSTART_ENV_VAR = "ZEN_VOCOTYPE_LAUNCHER_AUTOSTART_ENABLED"
 
 
 class Settings(ComponentSettings):
@@ -100,3 +101,8 @@ class Settings(ComponentSettings):
     #: 🔴 既有实例幂等命中不适用本窗口（幂等路径零附加等待——15:10 报告
     #: 性能红线）；冷启动就绪等待常远超窗口，同样零附加等待
     client_settle_timeout_s: float = Field(default=10.0, ge=0, le=120)
+
+    #: 登录桌面环境后自动启动 Launcher（T45 XDG Autostart）：维护
+    #: ``$XDG_CONFIG_HOME/autostart/zen-vocotype.desktop``；托盘勾选态菜单项
+    #: 热切换，启动时以本配置为准做一致性校验（含遗留条目清理）
+    autostart_enabled: bool = False

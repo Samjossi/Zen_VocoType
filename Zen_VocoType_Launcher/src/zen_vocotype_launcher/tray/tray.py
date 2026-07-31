@@ -8,6 +8,7 @@
 - ④ 立即启动 / 重新检测状态
 - ⑤ 三个延迟设置项（当前值编入文本）：服务端启动延迟 / 客户端启动间隔 /
   成功后自动退出
+- ⑤.5 登录后自动启动启动器（勾选态，T45；仅 Linux，其余平台禁用并标注）
 - ⑥ 组件位置设置项 + 恢复自动解析子项
 - ⑦ 退出启动器（不影响已启动组件）
 
@@ -57,6 +58,8 @@ class LauncherTray(QObject):
     service_delay_change_requested = Signal()
     client_interval_change_requested = Signal()
     auto_exit_change_requested = Signal()
+    #: 「登录后自动启动启动器」勾选态切换（triggered 携带目标勾选态）
+    autostart_change_requested = Signal(bool)
     #: 组件位置设置 / 恢复自动解析
     service_binary_change_requested = Signal()
     service_binary_reset_requested = Signal()
@@ -104,6 +107,13 @@ class LauncherTray(QObject):
         )
         self._auto_exit_action = self._menu.addAction("成功后自动退出（—）…")
         self._auto_exit_action.triggered.connect(self.auto_exit_change_requested)
+        self._menu.addSeparator()
+
+        # ⑤.5 登录后自动启动（勾选态，T45；🔴 零业务逻辑——勾选态只外抛
+        # Signal，desktop 文件读写与持久化全在装配层；action 引用持久持有）
+        self._autostart_action = self._menu.addAction("登录后自动启动启动器")
+        self._autostart_action.setCheckable(True)
+        self._autostart_action.triggered.connect(self.autostart_change_requested)
         self._menu.addSeparator()
 
         # ⑥ 组件位置设置 + 恢复自动解析
@@ -157,6 +167,24 @@ class LauncherTray(QObject):
     def set_busy(self, busy: bool) -> None:
         """编排进行中置灰「立即启动」（防重入；🔴 不打断进行中编排）。"""
         self._start_action.setEnabled(not busy)
+
+    # ------------------------------------------------------------------
+    # 自启动勾选项（T45；勾选态由装配层注入/回滚，托盘零业务逻辑）
+    # ------------------------------------------------------------------
+
+    def set_autostart_checked(self, checked: bool) -> None:
+        """刷新勾选态（blockSignals 防 triggered 重入——初始化与失败回滚用）。"""
+        self._autostart_action.blockSignals(True)
+        try:
+            self._autostart_action.setChecked(checked)
+        finally:
+            self._autostart_action.blockSignals(False)
+
+    def set_autostart_supported(self, supported: bool) -> None:
+        """平台支持性：不支持（非 Linux）时禁用并标注。"""
+        self._autostart_action.setEnabled(supported)
+        if not supported:
+            self._autostart_action.setText("登录后自动启动启动器（仅 Linux 支持）")
 
     # ------------------------------------------------------------------
     # 设置项标签刷新（当前值编入文本，随切换刷新）
